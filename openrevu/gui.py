@@ -37,6 +37,7 @@ SHORTCUTS = {"Select": "V", "Pan": "H", "Rectangle": "R", "Ellipse": "E", "Line"
 PERSISTENT_TOOLS = {"Count"}  # these stay active after each placement
 STAMPS = ["APPROVED", "REVIEWED", "REJECTED", "DRAFT", "FOR CONSTRUCTION", "VOID", "AS BUILT", "CONFIDENTIAL"]
 ZOOMS = [25, 50, 75, 100, 125, 150, 200, 300, 400]
+SIGNED_NOTICE = "This PDF is digitally signed. Saving will invalidate the signatures."
 TOOL_HINTS = {
     "Select": "Click a markup to select it. Drag to move. Drag the corner handle to resize. Right-click for more.",
     "Pan": "Drag to move the page. You can also drag with the middle mouse button.",
@@ -916,7 +917,8 @@ class Main(DocumentOps, W.QMainWindow):
         self._sync_central()
         self.refresh_all()
         QtCore.QTimer.singleShot(0, cv.fit_width)  # start at page width, like Revu
-        self.statusBar().showMessage(f"{title}: {d.page_count} page(s). Pick a tool from the toolbar.")
+        self.statusBar().showMessage(f"{title}: {d.page_count} page(s). "
+                                     + (SIGNED_NOTICE if d.signed else "Pick a tool from the toolbar."))
 
     def new_from_images(self):
         ps, _ = W.QFileDialog.getOpenFileNames(self, "Images", "", "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff)")
@@ -964,9 +966,28 @@ class Main(DocumentOps, W.QMainWindow):
             if u.toLocalFile().lower().endswith(".pdf"):
                 self.open(u.toLocalFile())
 
+    def _ask_save_signed(self) -> str:
+        """Saving rewrites the whole file, which breaks its digital signatures. Returns 'save_as', 'anyway' or 'cancel'."""
+        box = W.QMessageBox(self)
+        box.setWindowTitle("Digitally signed PDF")
+        box.setIcon(W.QMessageBox.Warning)
+        box.setText(SIGNED_NOTICE + " Save your changes to a new file to keep the signed original intact.")
+        save_as = box.addButton("Save As…", W.QMessageBox.AcceptRole)
+        anyway = box.addButton("Save anyway", W.QMessageBox.DestructiveRole)
+        box.addButton("Cancel", W.QMessageBox.RejectRole)
+        box.setDefaultButton(save_as)
+        box.exec_()
+        return {save_as: "save_as", anyway: "anyway"}.get(box.clickedButton(), "cancel")
+
     def _save(self, d: Document) -> bool:
+        in_place = bool(d.path)
+        if in_place and d.signed and not getattr(d, "signed_save_ok", False):
+            choice = self._ask_save_signed()
+            if choice == "cancel":
+                return False
+            in_place = choice == "anyway"
         try:
-            if d.path:
+            if in_place:
                 d.save()
             else:
                 p, _ = W.QFileDialog.getSaveFileName(self, "Save", getattr(d, "suggested_path", None) or "", "PDF (*.pdf)")
@@ -978,6 +999,7 @@ class Main(DocumentOps, W.QMainWindow):
         except ERRORS as e:
             W.QMessageBox.warning(self, "Save failed", str(e))
             return False
+        d.signed_save_ok = True   # the file at d.path is now our rewrite: its signatures are already broken
         recovery.remove(d.recovery_id)
         self._autosave_rev.pop(d.recovery_id, None)
         self.statusBar().showMessage("Saved")

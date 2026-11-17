@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import fitz
@@ -7,6 +8,7 @@ import pytest
 pytest.importorskip("PyQt5")
 from PyQt5 import QtCore, QtGui, QtTest, QtWidgets
 
+from openrevu.core import Document
 from openrevu.gui import Main, parse_pages
 
 
@@ -673,3 +675,60 @@ def test_a_narrow_drag_places_stamps_and_signatures_like_a_click(win):
     w.set_tool("Stamp"); drag(w, 0, (100, 150), (100, 320))
     w.set_tool("Signature"); drag(w, 0, (300, 150), (300, 320))
     assert sorted(m.subject for m in w.doc.markups()) == ["Signature", "Stamp"]
+
+
+@pytest.fixture
+def signed_win(app, signed_pdf):
+    w = Main(signed_pdf); w.show()
+    app.processEvents()
+    return w
+
+
+def answer_with(monkeypatch, label):
+    """Answer the next custom QMessageBox with the button called `label`; return what the box showed."""
+    seen = {"asked": 0}
+
+    def exec_(self):
+        seen["asked"] += 1
+        seen.update(text=self.text(), default=self.defaultButton().text())
+        self._clicked = next(b for b in self.buttons() if b.text() == label)
+        return 0
+    monkeypatch.setattr(QtWidgets.QMessageBox, "exec_", exec_)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "clickedButton", lambda self: getattr(self, "_clicked", None))
+    return seen
+
+
+def test_opening_a_signed_pdf_says_saving_breaks_the_signatures(signed_win):
+    assert "digitally signed" in signed_win.statusBar().currentMessage()
+
+
+def test_saving_a_signed_pdf_in_place_asks_first_and_defaults_to_save_as(signed_win, signed_pdf, monkeypatch, tmp_path):
+    w = signed_win
+    original = Path(signed_pdf).read_bytes()
+    w.doc.add_rect(0, fitz.Rect(100, 100, 200, 200))
+
+    seen = answer_with(monkeypatch, "Cancel")
+    w.save()
+    assert seen["asked"] == 1 and "signatures" in seen["text"]
+    assert seen["default"] == "Save As…"
+    assert Path(signed_pdf).read_bytes() == original and w.doc.modified
+
+    answer_with(monkeypatch, "Save As…")
+    copy = str(tmp_path / "marked-up.pdf")
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (copy, "")))
+    w.save()
+    assert Path(signed_pdf).read_bytes() == original
+    assert w.doc.path == copy and len(Document(copy).markups()) == 1
+
+
+def test_save_anyway_overwrites_a_signed_pdf_and_asks_only_once(signed_win, signed_pdf, monkeypatch):
+    w = signed_win
+    w.doc.add_rect(0, fitz.Rect(100, 100, 200, 200))
+    seen = answer_with(monkeypatch, "Save anyway")
+    w.save()
+    assert seen["asked"] == 1 and len(Document(signed_pdf).markups()) == 1
+    assert w.doc.signed          # the in-place save reopened the file; it still holds the (now broken) signatures
+
+    w.doc.add_rect(0, fitz.Rect(300, 300, 400, 400))
+    w.save()
+    assert seen["asked"] == 1 and len(Document(signed_pdf).markups()) == 2

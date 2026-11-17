@@ -632,6 +632,17 @@ def test_cli_encrypted_input(pdf, tmp_path):
     assert Document(str(tmp_path / "re.pdf"), "new").page_count == 3
 
 
+def test_cli_warns_when_saving_over_a_signed_input(signed_pdf, tmp_path, capsys):
+    from openrevu.cli import main
+    assert main(["watermark", signed_pdf, str(tmp_path / "copy.pdf"), "--text", "X"]) == 0
+    assert capsys.readouterr().err == ""                  # a new file leaves the signed original intact
+
+    same_file = os.path.join(os.path.dirname(signed_pdf), ".", os.path.basename(signed_pdf))
+    assert main(["watermark", signed_pdf, same_file, "--text", "X"]) == 0
+    err = capsys.readouterr().err
+    assert "warning" in err and "digitally signed" in err
+
+
 @pytest.mark.parametrize("rot", [0, 90, 180, 270])
 def test_watermark_image_orientation(pdf, tmp_path, rot):
     # left half black, right half white: after rendering the black half must still be on the left

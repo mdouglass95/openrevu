@@ -101,6 +101,25 @@ def test_failed_in_place_save_keeps_the_document_usable(pdf, monkeypatch):
     assert len(Document(pdf).markups()) == 1
 
 
+def test_opening_a_signed_pdf_sets_the_signed_flag(signed_pdf, pdf):
+    assert Document(signed_pdf).signed
+    assert not Document(pdf).signed
+    assert not Document().signed
+
+
+def test_a_blank_signature_field_is_not_signed(pdf, tmp_path):
+    pytest.importorskip("pyhanko")
+    from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+    from pyhanko.sign import fields
+    out = tmp_path / "blank-field.pdf"
+    with open(pdf, "rb") as f:
+        w = IncrementalPdfFileWriter(f)
+        fields.append_signature_field(w, fields.SigFieldSpec("SealHere", on_page=0, box=(40, 40, 240, 100)))
+        with open(out, "wb") as o:
+            w.write(o)
+    assert not Document(str(out)).signed
+
+
 def test_csv_and_render(pdf, tmp_path):
     doc = Document(pdf)
     doc.add_length(0, [(0, 0), (72, 0)], label=False)

@@ -48,3 +48,34 @@ def isolated_recovery_dir(tmp_path, monkeypatch):
     d = tmp_path / "recovery"
     monkeypatch.setenv("OPENREVU_RECOVERY_DIR", str(d))
     return d
+
+
+@pytest.fixture
+def signed_pdf(tmp_path):
+    """A one-page PDF with a valid digital signature (self-signed certificate, made with pyHanko)."""
+    pytest.importorskip("pyhanko")
+    import datetime
+
+    import fitz
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.primitives.serialization import pkcs12
+
+    from openrevu.sign import sign_pdf
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, "Sealing Engineer")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+            .serial_number(1).not_valid_before(now - datetime.timedelta(days=1))
+            .not_valid_after(now + datetime.timedelta(days=30)).sign(key, hashes.SHA256()))
+    p12 = tmp_path / "seal.p12"
+    p12.write_bytes(pkcs12.serialize_key_and_certificates(b"id", key, cert, None, serialization.BestAvailableEncryption(b"pw")))
+    plain = tmp_path / "unsigned.pdf"
+    d = fitz.open()
+    d.new_page().insert_text((72, 100), "Sealed permit set")
+    d.save(plain)
+    out = tmp_path / "signed.pdf"
+    sign_pdf(str(plain), str(out), str(p12), "pw")
+    return str(out)

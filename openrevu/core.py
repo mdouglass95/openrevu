@@ -496,6 +496,18 @@ class Document(SheetOps, PageOps):
         self._redo: list[bytes] = []
         self.modified = False
         self.default_scale, self.page_scales = self._load_scales()
+        # A full rewrite (all save() can do) invalidates digital signatures, so callers warn before saving over the
+        # file. Set once at open: the signatures in the file on disk are what a save would break.
+        self.signed = self._has_signatures()
+
+    def _has_signatures(self) -> bool:
+        # SigFlags bit 2 (AppendOnly) is the signer's "saving other than incrementally breaks this" marker. Bit 1 alone
+        # only says a signature field exists, which may still be blank.
+        flags = self.doc.get_sigflags()   # -1: no form at all
+        if flags > 0 and flags & 2:
+            return True
+        return bool(self.doc.is_form_pdf) and any(
+            w.is_signed for page in self.doc for w in page.widgets(types=[fitz.PDF_WIDGET_TYPE_SIGNATURE]))
 
     @staticmethod
     def _open(path: str) -> fitz.Document:

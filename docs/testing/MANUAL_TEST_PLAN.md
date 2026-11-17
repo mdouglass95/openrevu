@@ -56,6 +56,7 @@ Optional programs (tests that need them say so):
 | `rotated.pdf` | A sheet with a 90 degree page rotation |
 | `many_pages.pdf` | 60 sheets, for speed |
 | `form.pdf` | A page with two empty text fields |
+| `signed.pdf` | A copy of plan_v1 with a digital signature (self-signed, so not trusted) |
 | `tools.btx` | A Bluebeam tool set (made to the community description) with 3 usable tools and 1 stamp |
 
 **The scale of the drawings:** 18 points = 1 foot. Every sheet has a dimension line labelled `20'-0"`. It is
@@ -272,6 +273,13 @@ Everything must be there. Open the saved file in a **different PDF viewer**: the
 On Windows, open the file in a program that locks it (Bluebeam Revu, or Word's PDF view). Add a markup and press Ctrl+S.
 Expect "Save failed: … is it open in another program?". Draw and undo: the tab still works, and no error dialog appears in the
 next 60 seconds. Close the other program and press Ctrl+S: the save works, and no `<file>.tmp` is left.
+
+**T47b Signed PDF.** Open `signed.pdf`. The status bar says "This PDF is digitally signed. Saving will invalidate the signatures."
+Add a markup and press Ctrl+S. Expect a warning with **Save As…** (the default), **Save anyway**, and **Cancel**.
+**Cancel**: nothing is saved. **Save As…**: a file dialog opens and the copy gets the markup. Open `signed.pdf` again and choose
+**Sign > Verify signatures…** (Cancel the certificate question): it must say `intact` and `unchanged since signing`.
+In that tab add a markup, press Ctrl+S, choose **Save anyway**: the file is overwritten, and Verify now says `MODIFIED` or
+`EDITED AFTER SIGNING`. Add another markup and press Ctrl+S: no second warning.
 
 **T48 Autosave and recovery.** Start the program with `OPENREVU_AUTOSAVE_SECONDS=5 openrevu`. Open a file, add two markups, wait 10 seconds.
 Kill the program hard (`kill -9 <pid>`, or end the task). Start it again. Expect a question: "OpenRevu closed unexpectedly last time…".
