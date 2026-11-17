@@ -1037,20 +1037,8 @@ class Main(DocumentOps, W.QMainWindow):
         pr = P.QPrinter(P.QPrinter.HighResolution)
         if P.QPrintDialog(pr, self).exec_() != W.QDialog.Accepted:
             return
-        painter = QtGui.QPainter(pr)
-        for i in range(self.doc.page_count):
-            if i:
-                pr.newPage()
-            pix = self.doc.render(i, pr.resolution() / 72)
-            img = QtGui.QImage(pix.samples, pix.width, pix.height, pix.stride, QtGui.QImage.Format_RGB888)
-            rect = painter.viewport()
-            sz = img.size().scaled(rect.size(), QtCore.Qt.KeepAspectRatio)
-            painter.setViewport(rect.x(), rect.y(), sz.width(), sz.height())
-            painter.setWindow(img.rect())
-            painter.drawImage(0, 0, img)
-            painter.setViewport(rect)
-            painter.setWindow(rect)
-        painter.end()
+        from .printing import print_document
+        print_document(pr, self.doc)
 
     # ---------- tools & the Properties toolbar ----------
     def set_tool(self, name, announce=True):
