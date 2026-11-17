@@ -51,31 +51,41 @@ def isolated_recovery_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def signed_pdf(tmp_path):
-    """A one-page PDF with a valid digital signature (self-signed certificate, made with pyHanko)."""
+def selfsigned(tmp_path):
+    """make(common_name) -> (p12_path, pem_path): a self-signed signing identity. The .p12 passphrase is "pw"."""
     pytest.importorskip("pyhanko")
     import datetime
 
-    import fitz
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.hazmat.primitives.serialization import pkcs12
 
-    from openrevu.sign import sign_pdf
+    def make(cn="Test Signer"):
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        name = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, cn)])
+        now = datetime.datetime.now(datetime.timezone.utc)
+        cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+                .serial_number(7).not_valid_before(now - datetime.timedelta(days=1))
+                .not_valid_after(now + datetime.timedelta(days=30)).sign(key, hashes.SHA256()))
+        p12 = tmp_path / f"{cn}.p12"
+        p12.write_bytes(pkcs12.serialize_key_and_certificates(b"id", key, cert, None, serialization.BestAvailableEncryption(b"pw")))
+        pem = tmp_path / f"{cn}.pem"
+        pem.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+        return str(p12), str(pem)
+    return make
 
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, "Sealing Engineer")])
-    now = datetime.datetime.now(datetime.timezone.utc)
-    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
-            .serial_number(1).not_valid_before(now - datetime.timedelta(days=1))
-            .not_valid_after(now + datetime.timedelta(days=30)).sign(key, hashes.SHA256()))
-    p12 = tmp_path / "seal.p12"
-    p12.write_bytes(pkcs12.serialize_key_and_certificates(b"id", key, cert, None, serialization.BestAvailableEncryption(b"pw")))
+
+@pytest.fixture
+def signed_pdf(tmp_path, selfsigned):
+    """A one-page PDF with a valid digital signature."""
+    import fitz
+
+    from openrevu.sign import sign_pdf
     plain = tmp_path / "unsigned.pdf"
     d = fitz.open()
     d.new_page().insert_text((72, 100), "Sealed permit set")
     d.save(plain)
     out = tmp_path / "signed.pdf"
-    sign_pdf(str(plain), str(out), str(p12), "pw")
+    sign_pdf(str(plain), str(out), selfsigned("Sealing Engineer")[0], "pw")
     return str(out)

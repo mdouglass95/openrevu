@@ -732,3 +732,16 @@ def test_save_anyway_overwrites_a_signed_pdf_and_asks_only_once(signed_win, sign
     w.doc.add_rect(0, fitz.Rect(300, 300, 400, 400))
     w.save()
     assert seen["asked"] == 1 and len(Document(signed_pdf).markups()) == 2
+
+
+def test_after_save_as_a_signed_pdf_saves_to_the_copy_without_asking(signed_win, signed_pdf, monkeypatch, tmp_path):
+    w = signed_win
+    original = Path(signed_pdf).read_bytes()
+    copy = str(tmp_path / "copy.pdf")
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (copy, "")))
+    w.save_as()
+    seen = answer_with(monkeypatch, "Cancel")
+    w.doc.add_rect(0, fitz.Rect(100, 100, 200, 200))
+    w.save()
+    assert seen["asked"] == 0 and len(Document(copy).markups()) == 1
+    assert Path(signed_pdf).read_bytes() == original

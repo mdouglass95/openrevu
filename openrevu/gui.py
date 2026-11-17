@@ -206,6 +206,7 @@ class Main(DocumentOps, W.QMainWindow):
         self._sync_central()
         self.statusBar().showMessage("Open a PDF to begin (Ctrl+O)")
         self._autosave_rev: dict = {}           # document id -> the revision that was last written
+        self._rewritten: set = set()            # ids of signed documents whose file on disk is already our rewrite
         self.autosave_timer = QtCore.QTimer(self)
         self.autosave_timer.timeout.connect(self.autosave_now)
         self.autosave_timer.start(int(float(os.environ.get("OPENREVU_AUTOSAVE_SECONDS", "60")) * 1000))
@@ -941,6 +942,7 @@ class Main(DocumentOps, W.QMainWindow):
                 return
         recovery.remove(cv.doc.recovery_id)       # saved or discarded on purpose: no snapshot is needed
         self._autosave_rev.pop(cv.doc.recovery_id, None)
+        self._rewritten.discard(cv.doc.recovery_id)
         self.tabs.removeTab(i)
         cv.deleteLater()
         self._sync_central()
@@ -981,7 +983,7 @@ class Main(DocumentOps, W.QMainWindow):
 
     def _save(self, d: Document) -> bool:
         in_place = bool(d.path)
-        if in_place and d.signed and not getattr(d, "signed_save_ok", False):
+        if in_place and d.signed and d.recovery_id not in self._rewritten:
             choice = self._ask_save_signed()
             if choice == "cancel":
                 return False
@@ -999,11 +1001,14 @@ class Main(DocumentOps, W.QMainWindow):
         except ERRORS as e:
             W.QMessageBox.warning(self, "Save failed", str(e))
             return False
-        d.signed_save_ok = True   # the file at d.path is now our rewrite: its signatures are already broken
-        recovery.remove(d.recovery_id)
-        self._autosave_rev.pop(d.recovery_id, None)
+        self._saved(d)
         self.statusBar().showMessage("Saved")
         return True
+
+    def _saved(self, d: Document):
+        recovery.remove(d.recovery_id)
+        self._autosave_rev.pop(d.recovery_id, None)
+        self._rewritten.add(d.recovery_id)   # the file at d.path is now a full rewrite: no intact signatures left to warn about
 
     def save(self):
         if self._need_doc():
@@ -1018,8 +1023,7 @@ class Main(DocumentOps, W.QMainWindow):
             if p:
                 self.cv.select(None)
                 if self._run(self.doc.save, p, msg=f"Saved {p}"):
-                    recovery.remove(self.doc.recovery_id)
-                    self._autosave_rev.pop(self.doc.recovery_id, None)
+                    self._saved(self.doc)
                     self.tabs.setTabText(self.tabs.currentIndex(), os.path.basename(p))
                     self.prefs.add_recent(p)
 
