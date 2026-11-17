@@ -1,23 +1,21 @@
 """Print a document's pages onto a QPrinter."""
 from __future__ import annotations
 
-from PyQt5 import QtCore, QtGui
+from PyQt5 import QtGui
 
 
 def print_document(printer, doc) -> bool:
-    """Draw every page of `doc` onto `printer`, one page per sheet."""
+    """Draw every page of `doc` onto `printer`, one page per sheet, scaled to fit the printable area."""
     painter = QtGui.QPainter(printer)
+    vp = painter.viewport()
+    painter.setWindow(vp)   # draw in device pixels
     for i in range(doc.page_count):
         if i:
             printer.newPage()
-        pix = doc.render(i, printer.resolution() / 72)
+        page = doc.doc[i].rect
+        zoom = min(vp.width() / page.width, vp.height() / page.height)
+        pix = doc.render(i, zoom)
         img = QtGui.QImage(pix.samples, pix.width, pix.height, pix.stride, QtGui.QImage.Format_RGB888)
-        rect = painter.viewport()
-        sz = img.size().scaled(rect.size(), QtCore.Qt.KeepAspectRatio)
-        painter.setViewport(rect.x(), rect.y(), sz.width(), sz.height())
-        painter.setWindow(img.rect())
-        painter.drawImage(0, 0, img)
-        painter.setViewport(rect)
-        painter.setWindow(rect)
+        painter.drawImage(vp.x() + pix.x, vp.y() + pix.y, img)
     painter.end()
     return True

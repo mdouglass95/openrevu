@@ -67,3 +67,29 @@ def test_prints_every_page_with_content_in_place(app, tmp_path):
         assert not is_red(colour_at(p, 0.8, 0.2))
     assert is_blue(colour_at(printed[1], 0.8, 0.8))
     assert not is_blue(colour_at(printed[0], 0.8, 0.8))
+
+
+def record_renders(doc, monkeypatch):
+    """Spy on doc.render: returns the list of (width, height, bytes) of every pixmap made while printing."""
+    made = []
+    real = doc.render
+
+    def render(*a, **k):
+        pix = real(*a, **k)
+        made.append((pix.width, pix.height, pix.stride * pix.height))
+        return pix
+    monkeypatch.setattr(doc, "render", render)
+    return made
+
+
+def test_renders_at_the_paper_resolution_not_the_page_size_times_dpi(app, tmp_path, monkeypatch):
+    # An ARCH E sheet on letter paper at 300 dpi needs at most 2550 x 3300 device pixels.
+    # Rendering the 36 in wide page at 300 dpi would make it 10800 pixels wide.
+    doc = make_doc(tmp_path, n=1, size=ARCH_E)
+    made = record_renders(doc, monkeypatch)
+    out = tmp_path / "out.pdf"
+    print_document(pdf_printer(out, dpi=300), doc)
+    assert made
+    assert max(w for w, h, b in made) <= 2550 + 2
+    assert sum(h for w, h, b in made) >= 3300 * 0.95   # still fills the paper (a 3:4 sheet on 8.5 x 11 in is height-bound)
+    assert is_red(colour_at(fitz.open(out)[0], 0.2, 0.2))
