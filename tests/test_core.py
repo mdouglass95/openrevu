@@ -81,6 +81,26 @@ def test_save_in_place_and_delete(pdf):
     assert Document(pdf).markups() == []
 
 
+def test_failed_in_place_save_keeps_the_document_usable(pdf, monkeypatch):
+    doc = Document(pdf)
+    doc.add_rect(0, fitz.Rect(10, 10, 50, 50))
+
+    def locked(src, dst):
+        raise PermissionError(13, "The process cannot access the file", dst)
+    monkeypatch.setattr(os, "replace", locked)
+
+    with pytest.raises(OSError, match="open in another program"):
+        doc.save()
+    assert not doc.doc.is_closed
+    assert len(doc.markups()) == 1
+    assert doc.modified
+    assert not os.path.exists(pdf + ".tmp")
+
+    monkeypatch.undo()
+    doc.save()
+    assert len(Document(pdf).markups()) == 1
+
+
 def test_csv_and_render(pdf, tmp_path):
     doc = Document(pdf)
     doc.add_length(0, [(0, 0), (72, 0)], label=False)

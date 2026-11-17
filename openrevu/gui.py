@@ -2,6 +2,7 @@
 start page, document tabs, tool-group toolbar, Properties toolbar, left/right panels, Markups List."""
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import time
@@ -16,6 +17,8 @@ from .gui_ops import ERRORS, DocumentOps, parse_pages  # noqa: F401  (parse_page
 from .icons import tool_icon
 from . import recovery
 from .toolchest import ToolChest
+
+log = logging.getLogger(__name__)
 
 # tool groups shown as drop-down buttons (each remembers the last tool you used)
 TOOL_GROUPS = {
@@ -232,7 +235,8 @@ class Main(DocumentOps, W.QMainWindow):
                 recovery.write(d.recovery_id, d._snapshot(), d.path, self.tabs.tabText(i).lstrip("*"), bool(d._password))
                 self._autosave_rev[d.recovery_id] = d.revision
                 n += 1
-            except OSError as e:     # a full disk must not interrupt the user's work
+            except Exception as e:   # autosave runs every minute: no failure may open a dialog each time
+                log.exception("Autosave failed")
                 self.statusBar().showMessage(f"Autosave failed: {e}")
         return n
 

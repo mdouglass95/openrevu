@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import csv
 import getpass
 import json
@@ -1110,11 +1111,22 @@ class Document(SheetOps, PageOps):
             kw.update(self._encryption_kwargs())
         if path == self.path:
             tmp = path + ".tmp"
-            self.doc.save(tmp, **kw)
+            # self.doc is memory-backed (see _open), so `path` can be replaced while it stays open.
+            try:
+                self.doc.save(tmp, **kw)
+                try:
+                    os.replace(tmp, path)
+                except OSError as e:
+                    raise OSError(e.errno, f"Could not replace the file; is it open in another program? ({e.strerror})",
+                                  path) from e
+            except Exception:
+                with contextlib.suppress(OSError):
+                    os.remove(tmp)
+                raise
+            reopened = self._open(path)  # before closing the old one, so a failure leaves the document usable
             self._invalidate_pages()
             self.doc.close()
-            os.replace(tmp, path)
-            self.doc = self._open(path)
+            self.doc = reopened
             if self.doc.needs_pass and not self.doc.authenticate(self._password or kw.get("user_pw", "")):
                 raise PermissionError("saved file is encrypted; reopen with its password")
         else:
