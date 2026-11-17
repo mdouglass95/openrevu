@@ -93,3 +93,19 @@ def test_renders_at_the_paper_resolution_not_the_page_size_times_dpi(app, tmp_pa
     assert max(w for w, h, b in made) <= 2550 + 2
     assert sum(h for w, h, b in made) >= 3300 * 0.95   # still fills the paper (a 3:4 sheet on 8.5 x 11 in is height-bound)
     assert is_red(colour_at(fitz.open(out)[0], 0.2, 0.2))
+
+
+def test_large_paper_is_rendered_in_bands_of_bounded_size(app, tmp_path, monkeypatch):
+    # ARCH E paper at 300 dpi is 10800 x 14400 device pixels: 466 MB as one RGB pixmap.
+    doc = make_doc(tmp_path, n=1, size=ARCH_E)
+    made = record_renders(doc, monkeypatch)
+    out = tmp_path / "out.pdf"
+    print_document(pdf_printer(out, dpi=300, paper_in=(36, 48)), doc)
+    assert max(b for w, h, b in made) <= 64 * 2 ** 20
+    assert sum(h for w, h, b in made) >= 14400
+    # The bands join without gaps: the whole red quarter is red, the whole blue quarter is blue.
+    pix = fitz.open(out)[0].get_pixmap(matrix=fitz.Matrix(0.25, 0.25))
+    for y in range(int(pix.height * 0.02), int(pix.height * 0.48)):
+        assert is_red(pix.pixel(pix.width // 4, y)[:3]), y
+    for y in range(int(pix.height * 0.52), int(pix.height * 0.98)):
+        assert is_blue(pix.pixel(pix.width * 3 // 4, y)[:3]), y
