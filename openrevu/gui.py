@@ -904,10 +904,7 @@ class Main(DocumentOps, W.QMainWindow):
         except Exception as e:  # unreadable or corrupt file
             return W.QMessageBox.critical(self, "Open failed", str(e))
         self.prefs.add_recent(path)
-        d.save_as_required = d.restricted     # never overwrite a restricted PDF as issued: Save asks for a new name
         self._attach(d, os.path.basename(path))
-        if d.restricted:
-            self.statusBar().showMessage("This PDF restricts editing. Save will ask for a new file name.")
 
     def _attach(self, d: Document, title):
         cv = Canvas(d)
@@ -977,7 +974,7 @@ class Main(DocumentOps, W.QMainWindow):
 
     def _save(self, d: Document) -> bool:
         try:
-            if d.path and not getattr(d, "save_as_required", False):
+            if d.path and not d.save_as_required:
                 d.save()
             else:
                 title = "Save a copy (this PDF restricts editing)" if d.restricted else "Save"
@@ -985,7 +982,6 @@ class Main(DocumentOps, W.QMainWindow):
                 if not p:
                     return False
                 d.save(p)
-                d.save_as_required = False
                 self.tabs.setTabText(self.tabs.currentIndex(), os.path.basename(p))
                 self.prefs.add_recent(p)
         except ERRORS as e:
@@ -1009,7 +1005,6 @@ class Main(DocumentOps, W.QMainWindow):
             if p:
                 self.cv.select(None)
                 if self._run(self.doc.save, p, msg=f"Saved {p}"):
-                    self.doc.save_as_required = False
                     recovery.remove(self.doc.recovery_id)
                     self._autosave_rev.pop(self.doc.recovery_id, None)
                     self.tabs.setTabText(self.tabs.currentIndex(), os.path.basename(p))

@@ -488,8 +488,11 @@ class Document(SheetOps, PageOps):
             raise PermissionError("password required or incorrect")
         self.path = path
         self._password = password if encrypted else None  # re-applied on save so protection is never silently dropped
-        self._is_owner = bool(auth & 4)                    # opened with the owner password: no restrictions apply
-        self._owner_pw = (password if self._is_owner else secrets.token_urlsafe(24)) if self._permissions is not None else None
+        is_owner = bool(auth & 4)
+        # What this user may do: everything for an unencrypted file or the owner, else what the file allows.
+        self._allowed = -1 if self._permissions is None or is_owner else self._permissions
+        self._owner_pw = password if is_owner else secrets.token_urlsafe(24)   # used only if the file is encrypted
+        self.save_as_required = self.restricted   # for UIs: do not overwrite a restricted file as issued
         self.author = getpass.getuser()
         self._depth = 0
         self.generation = 0
@@ -584,7 +587,7 @@ class Document(SheetOps, PageOps):
     def restricted(self) -> bool:
         """True if the PDF forbids markups or changes and was not opened with its owner password."""
         need = fitz.PDF_PERM_ANNOTATE | fitz.PDF_PERM_MODIFY
-        return self._permissions is not None and not self._is_owner and self._permissions & need != need
+        return self._allowed & need != need
 
     def _encryption_kwargs(self) -> dict:
         """Arguments that protect a file written from this document the way the opened file was protected: the same
@@ -596,7 +599,8 @@ class Document(SheetOps, PageOps):
                     permissions=self._permissions)
 
     def _dump(self) -> bytes:
-        """Serialize for the undo history; protected documents never leave plaintext copies in memory."""
+        """Serialize for the undo history and autosave. Protected documents never leave plaintext copies in memory,
+        and a snapshot of an encrypted file stays encrypted so a recovered copy keeps its permissions."""
         return self.doc.tobytes(**self._encryption_kwargs())
 
     # --- scales (default + per page), persisted in PDF keywords ---
@@ -1143,6 +1147,7 @@ class Document(SheetOps, PageOps):
         else:
             self.doc.save(path, **kw)
             self.path = path
+            self.save_as_required = False   # the new file is the user's own copy
         self.modified = False
 
 

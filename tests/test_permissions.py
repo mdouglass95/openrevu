@@ -135,3 +135,11 @@ def test_saving_a_restricted_pdf_asks_for_a_new_file_name(gui, tmp_path, monkeyp
     gui.doc.add_rect(0, fitz.Rect(60, 60, 90, 90))
     gui.save()                                                # the copy is saved in place, without asking again
     assert len(asked) == 1 and len(Document(copy).markups()) == 2
+
+
+def test_a_compare_overlay_of_a_restricted_pdf_keeps_its_permissions(tmp_path):
+    from openrevu.compare import compare_documents
+    src = make_pdf(tmp_path / "issued.pdf")
+    out = str(tmp_path / "overlay.pdf")
+    compare_documents(src, src, out)
+    assert user_permissions(out) == user_permissions(src)

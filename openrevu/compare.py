@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import csv
 import difflib
-import secrets
 from dataclasses import dataclass, field
 
 import pymupdf as fitz  # PyMuPDF
@@ -169,10 +168,8 @@ def compare_documents(old_path, new_path, out_path=None, match="sheet", dpi=100,
     if out is not None:
         if not len(out):
             out.new_page()
-        secret = old_password or new_password            # an overlay of protected files is protected too
-        enc = {"encryption": fitz.PDF_ENCRYPT_AES_256, "user_pw": secret, "owner_pw": secrets.token_urlsafe(24),
-               "permissions": -1} if secret else {}
-        out.save(out_path, garbage=3, deflate=True, **enc)
+        # an overlay of protected files is protected too
+        out.save(out_path, garbage=3, deflate=True, **(old._encryption_kwargs() or new._encryption_kwargs()))
         out.close()
     old.doc.close(); new.doc.close()
     return results

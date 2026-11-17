@@ -332,8 +332,7 @@ class PageOps:
             perm |= fitz.PDF_PERM_COPY
         if allow_modify:
             perm |= fitz.PDF_PERM_MODIFY | fitz.PDF_PERM_ANNOTATE | fitz.PDF_PERM_FORM
-        if self._permissions is not None and not self._is_owner:
-            perm &= self._permissions          # a copy never allows more than the file's author allowed
+        perm &= self._allowed          # a copy never allows more than the file's author allowed this user
         self._store_scales()
         self.doc.save(path, encryption=fitz.PDF_ENCRYPT_AES_256, user_pw=user_pw,
                       owner_pw=owner_pw or secrets.token_urlsafe(24), permissions=perm, garbage=3, deflate=True)
