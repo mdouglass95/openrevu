@@ -1047,8 +1047,11 @@ class Main(DocumentOps, W.QMainWindow):
             dlg.setMaximum(total)
             dlg.setValue(done)
             return not dlg.wasCanceled()
-        ok = print_document(pr, self.doc, progress)
-        dlg.close()
+        try:
+            ok = print_document(pr, self.doc, progress)
+        finally:
+            dlg.close()
+            dlg.deleteLater()
         self.statusBar().showMessage(f"Printed {self.doc.page_count} page(s)." if ok else "Printing cancelled.")
 
     # ---------- tools & the Properties toolbar ----------

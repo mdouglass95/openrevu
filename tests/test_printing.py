@@ -1,4 +1,8 @@
+import json
 import os
+import subprocess
+import sys
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pymupdf as fitz
@@ -174,10 +178,6 @@ print(json.dumps({"before": before, "peak": peak_rss_mb(), "pages": fitz.open(tm
 
 
 def test_printing_arch_e_at_1200_dpi_keeps_peak_memory_low(tmp_path):
-    import json
-    import subprocess
-    import sys
-    from pathlib import Path
     env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
     r = subprocess.run([sys.executable, "-c", PRINT_ARCH_E_AT_1200_DPI, str(Path(__file__).parent), str(tmp_path)],
                        capture_output=True, text=True, env=env, timeout=600)

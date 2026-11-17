@@ -34,8 +34,8 @@ def print_document(printer, doc, progress: Callable[[int, int], bool] | None = N
         plan.append((i, zoom, _bands(page, zoom)))
     total = sum(len(b) for _, _, b in plan)
 
-    def draw_bands():
-        """Yield the number of bands drawn so far: 0, then after each band."""
+    def bands_drawn():
+        """Draw the bands one by one. Yield how many are drawn so far: 0 at first, then after each band."""
         done = 0
         yield done
         for i, zoom, bands in plan:
@@ -50,7 +50,7 @@ def print_document(printer, doc, progress: Callable[[int, int], bool] | None = N
                 yield done
 
     try:
-        for done in draw_bands():
+        for done in bands_drawn():
             if progress and not progress(done, total):
                 printer.abort()
                 return False
