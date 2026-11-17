@@ -87,7 +87,7 @@ def test_geometry_is_visual_on_rotated_cropped_pages(pdf, rot, crop):
     d.add_freehand(0, [(10, 10), (40, 70)])
     d.add_rect(0, fitz.Rect(200, 60, 260, 110))
     got = {m.kind: m for m in d.markups()}
-    assert got["PolyLine"].points() == pytest.approx(pts, abs=0.5)
+    assert flat(got["PolyLine"].points()) == pytest.approx(flat(pts), abs=0.5)
     assert tuple(got["Square"].rect) == pytest.approx((200, 60, 260, 110), abs=1.5)
     assert vis.contains(got["Square"].rect)
     for m in list(d.markups()):

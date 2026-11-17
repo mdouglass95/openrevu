@@ -65,6 +65,18 @@ def test_unmodified_documents_are_not_snapshotted_and_modified_ones_are(app, pdf
     assert not [f for f in files(isolated_recovery_dir) if f.endswith(".tmp")]         # writes are completed
 
 
+def test_an_autosave_error_of_any_kind_goes_to_the_status_bar(app, pdf, isolated_recovery_dir, monkeypatch):
+    w = Main(pdf); app.processEvents()
+    w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change()
+
+    def broken(self):
+        raise RuntimeError("document closed")
+    monkeypatch.setattr(Document, "_snapshot", broken)
+    assert w.autosave_now() == 0
+    assert "Autosave failed" in w.statusBar().currentMessage()
+    assert files(isolated_recovery_dir) == []
+
+
 def test_saving_or_discarding_removes_the_snapshot(app, pdf, tmp_path, isolated_recovery_dir, monkeypatch):
     w = Main(pdf)
     w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change(); w.autosave_now()

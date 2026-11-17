@@ -269,6 +269,9 @@ arrives. **Copy text**: drag over text, paste in a text editor: the text arrives
 
 **T47 Save and reopen.** Add markups, a measurement scale, a sheet revision, a custom column. Save. Close. Open again.
 Everything must be there. Open the saved file in a **different PDF viewer**: the markups must show there too.
+On Windows, open the file in a program that locks it (Bluebeam Revu, or Word's PDF view). Add a markup and press Ctrl+S.
+Expect "Save failed: … is it open in another program?". Draw and undo: the tab still works, and no error dialog appears in the
+next 60 seconds. Close the other program and press Ctrl+S: the save works, and no `<file>.tmp` is left.
 
 **T48 Autosave and recovery.** Start the program with `OPENREVU_AUTOSAVE_SECONDS=5 openrevu`. Open a file, add two markups, wait 10 seconds.
 Kill the program hard (`kill -9 <pid>`, or end the task). Start it again. Expect a question: "OpenRevu closed unexpectedly last time…".
