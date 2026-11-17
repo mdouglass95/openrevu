@@ -1,8 +1,3 @@
-# openrevu
-
-PyQt5 + PyMuPDF desktop app for PDF markup, measurement and review. Fork of `vineetpadia/openrevu` (`upstream`); our remote is `origin` (`mdouglass95/openrevu`). Default branch is `main` (upstream still uses `master`).
-
-## Environment
 
 - Use the repo venv: `.venv/bin/python`. Create it with `python3 -m venv .venv && .venv/bin/pip install -e '.[test]'`.
 - Run tests with `.venv/bin/python -m pytest`. Config lives in `pyproject.toml` under `[tool.pytest.ini_options]`.
@@ -18,6 +13,7 @@ PyQt5 + PyMuPDF desktop app for PDF markup, measurement and review. Fork of `vin
 - Keep the version identical in `pyproject.toml` and `openrevu/__init__.py`; `packaging/check_version.py` checks it. Release steps live in `docs/RELEASING.md`.
 - `build/`, `dist/` and `*.egg-info/` are generated output. Edit sources under `openrevu/` only.
 - For GUI changes, also check the relevant section of `docs/testing/MANUAL_TEST_PLAN.md` and update it when behaviour changes. Regenerate README screenshots with `docs/make_screenshots.py` when the UI they show changes.
+- Write any out of scope problems you find while working on a feature or fix to a Github issue. In your reponse to the user, indicate if any issues had been created in that run but do not explain them - they will be handled by future sessions
 
 ## Skills: when to invoke
 
