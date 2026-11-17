@@ -142,7 +142,7 @@ def test_page_ops_on_rotated_pages(pdf, tmp_path):
     assert (d.doc[0].rect.width, d.doc[0].rect.height) == pytest.approx((300, 100))
     d.crop_page(0, fitz.Rect(10, 10, 110, 60))  # relative to the visible area
     assert (d.doc[0].rect.width, d.doc[0].rect.height) == pytest.approx((100, 50))
-    d.insert_blank(at=1); d.doc[1].set_rotation(270)
+    d.insert_blank(at=1); d.rotate_pages([1], 270)
     d.header_footer(footer=("", "FOOT {page}", ""))
     d.bates("B-")
     d.watermark("WM", pages=[1])
@@ -215,6 +215,107 @@ def test_undo_redo(pdf):
     d.undo()
     m3 = d.markups()[0]
     assert m3.annot.border["width"] != 7
+
+
+def test_edits_undo_and_redo_never_copy_the_whole_document(pdf, monkeypatch):
+    """A copy of the document per edit costs time and memory in proportion to the file (#3)."""
+    d = Document(pdf)
+    calls = []
+    real = fitz.Document.tobytes
+    monkeypatch.setattr(fitz.Document, "tobytes", lambda self, *a, **k: calls.append(1) or real(self, *a, **k))
+    d.add_rect(0, fitz.Rect(10, 10, 50, 50))
+    d.markups()[0].set_width(3)
+    d.set_scale(Scale("m", 0.1))
+    assert d.undo() and d.undo() and d.redo()
+    assert calls == []
+
+
+def test_consecutive_width_or_opacity_changes_of_one_markup_are_one_undo_step(pdf):
+    d = Document(pdf)
+    d.add_rect(0, fitz.Rect(10, 10, 50, 50), width=1.5); d.add_rect(0, fitz.Rect(60, 60, 90, 90))
+    a, b = d.markups()
+    opacity = a.annot.opacity
+    for w in (2, 3, 4, 5):
+        a.set_width(w)
+    assert d.undo_steps == 3
+    b.set_width(6)                                   # another markup: a new step
+    a.set_opacity(0.5); a.set_opacity(0.4)
+    assert d.undo_steps == 5
+    assert d.undo() and d.markups()[0].annot.opacity == opacity
+    assert d.undo() and d.markups()[1].annot.border["width"] != 6
+    assert d.undo() and d.markups()[0].annot.border["width"] == 1.5 and d.undo_steps == 2
+    assert d.redo() and d.markups()[0].annot.border["width"] == 5 and d.redo_steps == 2
+    d.undo(); a = d.markups()[0]
+    a.set_width(9)                                   # after an undo, a change starts a new step
+    assert d.undo_steps == 3 and d.redo_steps == 0 and d.undo() and d.markups()[0].annot.border["width"] == 1.5
+
+
+@pytest.mark.parametrize("write", ["save", "save_as", "snapshot", "save_encrypted", "optimize", "extract", "links"])
+def test_undo_and_redo_stay_exact_after_the_document_is_written(pdf, tmp_path, write):
+    """Writing the journalled document itself breaks later undo steps; every write must leave the history intact."""
+    d = Document(pdf)
+    d.set_unit_style("feet-inches"); d.add_rect(0, fitz.Rect(10, 10, 50, 50)); d.set_metadata(title="T1")
+    d.undo(); d.undo(); d.redo()           # a redo step is waiting
+    {"save": lambda: d.save(), "save_as": lambda: d.save(str(tmp_path / "as.pdf")), "snapshot": d._snapshot,
+     "save_encrypted": lambda: d.save_encrypted(str(tmp_path / "e.pdf"), "pw"),
+     "optimize": lambda: d.optimize(str(tmp_path / "o.pdf")),
+     "extract": lambda: d.extract_pages([0], str(tmp_path / "x.pdf")), "links": lambda: d.links(0)}[write]()
+    assert d.undo() and d.markups() == [] and d.unit_style == "feet-inches"
+    assert d.undo() and d.unit_style == "decimal" and not d.undo()
+    assert d.redo() and d.redo() and d.redo() and len(d.markups()) == 1 and d.doc.metadata["title"] == "T1"
+
+
+def test_reading_text_on_a_rotated_page_keeps_the_redo_step(pdf):
+    """PyMuPDF turns a rotated page to 0 and back to read its text."""
+    d = Document(pdf)
+    d.rotate_pages([0], 90); d.add_rect(0, fitz.Rect(10, 10, 50, 50)); d.undo()
+    assert d.search("SECRET", pages=[0]) and "SECRET" in d.page_text(0) and d.doc[0].get_drawings() == []
+    assert d.redo() and len(d.markups()) == 1 and d.doc[0].rotation == 90
+
+
+def test_undo_restores_settings_and_metadata_of_a_file_that_had_none_stored(pdf):
+    d = Document(pdf)
+    d.set_unit_style("feet-inches", 8); d.set_metadata(title="T1")
+    assert d.undo() and d.doc.metadata["title"] == ""
+    d.add_rect(0, fitz.Rect(10, 10, 50, 50))              # an edit after the undo must not write the old title back
+    assert d.doc.metadata["title"] == "" and d.unit_style == "feet-inches"
+    assert d.undo() and d.undo() and (d.unit_style, d.fraction) == ("decimal", 16)
+
+
+def test_undo_of_the_edit_that_created_the_info_dictionary(pdf):
+    """The file has no Info dictionary. Undo removes the one an edit made; the next edit must still work."""
+    assert fitz.open(pdf).xref_get_key(-1, "Info")[0] == "null"
+    d = Document(pdf)
+    d.set_unit_style("feet-inches"); d.undo()
+    d.set_unit_style("feet-inches"); d.set_metadata(title="T")
+    assert d.undo() and d.undo() and d.unit_style == "decimal" and d.redo() and d.redo() and d.doc.metadata["title"] == "T"
+
+
+def test_width_changes_after_undo_and_redo_or_a_pause_are_new_steps(pdf, monkeypatch):
+    import openrevu.core as core
+    clock = [100.0]
+    monkeypatch.setattr(core.time, "monotonic", lambda: clock[0])
+    d = Document(pdf)
+    d.add_rect(0, fitz.Rect(10, 10, 50, 50)); d.markups()[0].set_width(2)
+    d.undo(); d.redo()
+    d.markups()[0].set_width(3)
+    assert d.undo_steps == 3
+    clock[0] += 60                                   # a minute later: a separate change
+    d.markups()[0].set_width(4)
+    assert d.undo_steps == 4
+    clock[0] += 0.5; d.markups()[0].set_width(5)     # quick clicks still join
+    assert d.undo_steps == 4
+
+
+def test_saving_keeps_the_file_identifier(pdf, tmp_path):
+    original = fitz.open(pdf).xref_get_key(-1, "ID")
+    assert original[0] == "array"
+    d = Document(pdf)
+    d.add_rect(0, fitz.Rect(10, 10, 50, 50)); d.save()
+    d.add_rect(0, fitz.Rect(60, 60, 90, 90)); d.save(str(tmp_path / "as.pdf"))
+    first = lambda key: key[1].strip("[]").split(">")[0]  # noqa: E731
+    assert first(fitz.open(pdf).xref_get_key(-1, "ID")) == first(original)
+    assert first(fitz.open(str(tmp_path / "as.pdf")).xref_get_key(-1, "ID")) == first(original)
 
 
 def test_undo_page_ops_and_scales(pdf):
@@ -371,7 +472,8 @@ def test_merge_split_extract_images(pdf, tmp_path):
     n = d.page_count
     d.insert_image_page(str(img), at=0)
     assert d.page_count == n + 1
-    assert Document.from_images([str(img), str(img)]).page_count == 2
+    imgs = Document.from_images([str(img), str(img)])
+    assert imgs.page_count == 2 and not imgs.undo() and not imgs.modified     # the history starts with the pages
 
 
 def test_navigation_bookmarks_links_labels(pdf):
@@ -562,8 +664,7 @@ def test_stale_markup_raises_instead_of_crashing(pdf):
     d.add_rect(0, fitz.Rect(10, 10, 50, 50))
     m = d.markups()[0]
     d.save()
-    with pytest.raises(RuntimeError, match="stale"):
-        m.subject
+    assert m.kind == "Square"      # a save leaves the markups as they were
 
 
 def test_format_value():
@@ -767,16 +868,16 @@ def test_fill_area_errors(tmp_path):
         d.add_fill_area(0, (100, 200))        # exactly on a wall line
 
 
-def test_undo_history_of_protected_documents_is_encrypted(pdf, tmp_path):
+def test_undo_and_save_of_protected_documents(pdf, tmp_path, monkeypatch):
+    """The undo history keeps no serialized copies, and a save after undo and redo stays protected."""
     enc = str(tmp_path / "enc.pdf")
     Document(pdf).save_encrypted(enc, "pw")
     d = Document(enc, "pw")
-    d.add_rect(0, fitz.Rect(10, 10, 50, 50))
-    assert d._undo and all(fitz.open("pdf", b).needs_pass for b in d._undo)
-    assert d.undo() and d.markups() == [] and d.redo() and len(d.markups()) == 1
-    assert all(fitz.open("pdf", b).needs_pass for b in d._undo + d._redo)
-    plain = Document(pdf); plain.add_rect(0, fitz.Rect(1, 1, 5, 5))
-    assert not fitz.open("pdf", plain._undo[0]).needs_pass
+    d.add_rect(0, fitz.Rect(10, 10, 50, 50)); d.add_rect(0, fitz.Rect(60, 60, 90, 90))
+    assert d.undo() and len(d.markups()) == 1 and d.undo() and d.markups() == [] and d.redo()
+    d.save()
+    assert fitz.open(enc).needs_pass and len(Document(enc, "pw").markups()) == 1
+    assert d.undo() and d.markups() == [] and d.redo() and len(d.markups()) == 1   # the history outlives the save
 
 
 def test_ocr_makes_scans_searchable(tmp_path):
@@ -840,19 +941,19 @@ def test_create_and_fill_form_fields(pdf, tmp_path):
     for bad in (("name", "text"), ("", "text"), ("x", "bogus"), ("y", "combo")):
         with pytest.raises(ValueError):
             d.add_form_field(0, fitz.Rect(1, 1, 50, 20), *bad)
-    assert len(d._undo) == 5  # four successful adds + the value change; failed attempts left no undo steps
+    assert d.undo_steps == 5  # four successful adds + the value change; failed attempts left no undo steps
     d.undo()  # undoes set_form_value
     assert {x["name"]: x["value"] for x in d.form_fields()}["name"] == "Bob"
 
 
 def test_failed_operations_do_not_pollute_undo(pdf):
     d = Document(pdf)
-    n = len(d._undo)
+    n = d.undo_steps
     for fn in (lambda: d.delete_pages([9]), lambda: d.rotate_pages([0], 45), lambda: d.reorder([0, 0, 1]),
                lambda: d.add_area(0, [(0, 0), (1, 0), (1, 1)], depth=-1)):
         with pytest.raises((ValueError, IndexError)):
             fn()
-    assert len(d._undo) == n
+    assert d.undo_steps == n
 
 
 # ---------- second-review regressions ----------
@@ -904,17 +1005,10 @@ def test_failed_operation_restores_dirty_and_redo_state(pdf):
     d = Document(pdf)
     d.add_rect(0, fitz.Rect(1, 1, 9, 9)); d.undo()
     d.modified = False
-    snapshot = (len(d._undo), len(d._redo))
+    snapshot = (d.undo_steps, d.redo_steps)
     with pytest.raises(ValueError):
         d.add_form_field(0, fitz.Rect(1, 1, 50, 20), "", "text")
-    assert not d.modified and (len(d._undo), len(d._redo)) == snapshot and d.redo()
-    d2 = Document(pdf)
-    for i in range(Document.MAX_UNDO):
-        d2.add_rect(0, fitz.Rect(1, 1, 5 + i, 5))
-    full = list(d2._undo)
-    with pytest.raises(IndexError):
-        d2.delete_pages([99])
-    assert d2._undo == full  # a failure at the undo cap must not evict the oldest step
+    assert not d.modified and (d.undo_steps, d.redo_steps) == snapshot and d.redo()
 
 
 def test_fill_area_accuracy_within_half_percent(tmp_path):
@@ -1005,6 +1099,9 @@ def test_cli_run_script(pdf, tmp_path):
     assert main(["run", pdf, out, str(tmp_path / "bad.py")]) == 1
     (tmp_path / "syn.py").write_text("def (\n")
     assert main(["run", pdf, out, str(tmp_path / "syn.py")]) == 1
+    (tmp_path / "raw.py").write_text("doc.doc[0].set_rotation(90)\ndoc.add_rect(0, (10, 10, 50, 50))\n")
+    assert main(["run", pdf, out, str(tmp_path / "raw.py")]) == 0           # a script may change doc.doc itself
+    assert fitz.open(out)[0].rotation == 90 and len(Document(out).markups()) == 1
 
 
 # ---------- architectural units ----------
@@ -1153,4 +1250,4 @@ def test_extract_and_split_keep_scales_viewports_columns_and_style(pdf, tmp_path
     assert [x.scale_for(0).unit for x in firsts] == ["in", "ft", "m"]                # each part knows its own page scale
     assert [len(x.viewports) for x in firsts] == [1, 0, 1] and firsts[0].viewports[0][2].unit == "cm"
     # the source document was not changed by writing the extract
-    assert d.scale_for(2).unit == "m" and len(d.viewports) == 2 and len(d._undo) >= 1
+    assert d.scale_for(2).unit == "m" and len(d.viewports) == 2 and d.undo_steps >= 1

@@ -90,7 +90,8 @@ def main(argv=None) -> int:
         elif a.cmd == "run":
             with open(a.script) as fh:
                 code = compile(fh.read(), a.script, "exec")
-            exec(code, {"doc": d, "__name__": "__openrevu_script__"})  # noqa: S102 - user's own script, by design
+            with d._operation("script"):     # so that the script may also change doc.doc (the PyMuPDF document)
+                exec(code, {"doc": d, "__name__": "__openrevu_script__"})  # noqa: S102 - user's own script, by design
             d.save(a.output)
         elif a.cmd == "sheets":
             print(f"{d.auto_bookmarks()} bookmarks, {d.auto_hyperlinks()} links"); d.save(a.output)

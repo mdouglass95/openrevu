@@ -155,7 +155,9 @@ stamp with the text, your user name, and today's date. Drag to make a bigger one
 In the **Tool Chest** panel, open the *Stamps* group and click `REJECTED`: the Stamp tool starts with that text.
 
 **T17 Undo and redo.** Place three markups. Press Ctrl+Z three times, then Ctrl+Y twice. Expect each step to be correct.
-The Undo button and the Edit menu must agree.
+The Undo button and the Edit menu must agree. Select a rectangle and click the Width up arrow ten times: the line gets thicker
+at each click. One Ctrl+Z puts back the width it had before the first click. Press Ctrl+Y, save with Ctrl+S, then press
+Ctrl+Z: the width goes back again (saving keeps the undo history). Edits and undo stay instant on a large raster set.
 
 **T18 Copy and paste.** Select a rectangle. Ctrl+C, Ctrl+V: a copy appears slightly offset. Ctrl+D duplicates.
 Right-click empty space and choose **Paste here**: the copy lands where you clicked.
