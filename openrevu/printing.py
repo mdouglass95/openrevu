@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+from typing import Callable
 
 import pymupdf as fitz
 from PyQt5 import QtGui
@@ -11,21 +12,42 @@ from PyQt5 import QtGui
 BAND_BYTES = 32 * 2 ** 20
 
 
-def print_document(printer, doc) -> bool:
-    """Draw every page of `doc` onto `printer`, one page per sheet, scaled to fit the printable area."""
+def _bands(page: fitz.Rect, zoom: float) -> list[fitz.Rect]:
+    """Split `page` into horizontal strips (in page points) whose pixmaps at `zoom` stay under BAND_BYTES."""
+    width, height = math.ceil(page.width * zoom), math.ceil(page.height * zoom)
+    rows = max(1, BAND_BYTES // (3 * width))
+    return [fitz.Rect(0, top / zoom, page.width, min(top + rows, height) / zoom) for top in range(0, height, rows)]
+
+
+def print_document(printer, doc, progress: Callable[[int, int], bool] | None = None) -> bool:
+    """Draw every page of `doc` onto `printer`, one page per sheet, scaled to fit the printable area
+    at the printer's resolution.
+
+    `progress(done, total)` is called before the first band and after each one; it returns False to cancel.
+    Returns False if cancelled (the print job is aborted), True otherwise."""
     painter = QtGui.QPainter(printer)
     vp = painter.viewport()
+    plan = []
     for i in range(doc.page_count):
-        if i:
-            printer.newPage()
         page = doc.doc[i].rect
         zoom = min(vp.width() / page.width, vp.height() / page.height)
-        width, height = math.ceil(page.width * zoom), math.ceil(page.height * zoom)
-        rows = max(1, BAND_BYTES // (3 * width))
-        for top in range(0, height, rows):
-            band = fitz.Rect(0, top / zoom, page.width, min(top + rows, height) / zoom)
-            pix = doc.render(i, zoom, clip=band)
-            img = QtGui.QImage(pix.samples, pix.width, pix.height, pix.stride, QtGui.QImage.Format_RGB888)
-            painter.drawImage(vp.x() + pix.x, vp.y() + pix.y, img)
-    painter.end()
-    return True
+        plan.append((i, zoom, _bands(page, zoom)))
+    total, done = sum(len(b) for _, _, b in plan), 0
+    try:
+        if progress and not progress(0, total):
+            printer.abort()
+            return False
+        for i, zoom, bands in plan:
+            if i:
+                printer.newPage()
+            for band in bands:
+                pix = doc.render(i, zoom, clip=band)
+                img = QtGui.QImage(pix.samples, pix.width, pix.height, pix.stride, QtGui.QImage.Format_RGB888)
+                painter.drawImage(vp.x() + pix.x, vp.y() + pix.y, img)
+                done += 1
+                if progress and not progress(done, total):
+                    printer.abort()
+                    return False
+        return True
+    finally:
+        painter.end()

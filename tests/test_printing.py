@@ -111,6 +111,20 @@ def test_large_paper_is_rendered_in_bands_of_bounded_size(app, tmp_path, monkeyp
         assert is_blue(pix.pixel(pix.width * 3 // 4, y)[:3]), y
 
 
+def test_reports_progress_and_stops_when_cancelled(app, tmp_path, monkeypatch):
+    doc = make_doc(tmp_path, n=3)
+    made = record_renders(doc, monkeypatch)
+    seen = []
+    assert print_document(pdf_printer(tmp_path / "all.pdf"), doc, progress=lambda d, t: seen.append((d, t)) or True)
+    total = seen[-1][1]
+    assert seen[-1] == (total, total) and total >= 3
+    assert [d for d, t in seen] == sorted(d for d, t in seen)
+
+    made.clear()
+    assert print_document(pdf_printer(tmp_path / "cancelled.pdf"), doc, progress=lambda d, t: d == 0) is False
+    assert len(made) == 1   # nothing rendered after the cancel
+
+
 # Runs in a fresh process, so the peak resident memory it reports belongs to this print job alone.
 PRINT_ARCH_E_AT_1200_DPI = r'''
 import json, sys
