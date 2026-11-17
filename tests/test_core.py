@@ -6,7 +6,7 @@ import math
 import fitz
 import pytest
 
-from openrevu.core import Document, Scale, cloud_points, polygon_area
+from openrevu.core import TAG, Document, Scale, cloud_points, polygon_area
 
 
 @pytest.fixture
@@ -114,16 +114,12 @@ def test_csv_and_render(pdf, tmp_path):
     assert pix.width == pytest.approx(612 * 1.5, abs=1)
 
 
-def _set_scales_keyword(path, blob):
-    d = fitz.open(path)
-    d.set_metadata({"keywords": "OpenRevu-scales=" + json.dumps(blob)})
-    d.saveIncr()
-    d.close()
-
-
 def test_injected_scale_unit_falls_back_to_default_and_adds_no_action(pdf):
     evil = "ft)/A<</S/URI/URI(https://evil.example)>>/X("
-    _set_scales_keyword(pdf, {"default": {"unit": evil, "unit_per_pt": 0.01}, "pages": {}})
+    blob = {"default": {"unit": evil, "unit_per_pt": 0.01}, "pages": {}}
+    with fitz.open(pdf) as d:
+        d.set_metadata({"keywords": f"{TAG}-scales=" + json.dumps(blob)})
+        d.saveIncr()
     doc = Document(pdf)
     assert doc.default_scale == Scale()
     doc.add_length(0, [(72, 72), (144, 72)], label=False)
@@ -132,13 +128,20 @@ def test_injected_scale_unit_falls_back_to_default_and_adds_no_action(pdf):
     assert m.measurement()[2] == "ft"
 
 
-@pytest.mark.parametrize("unit_per_pt", ["nan", "inf", 0, -1])
-def test_scale_from_dict_rejects_bad_unit_per_pt(unit_per_pt):
+@pytest.mark.parametrize("unit, unit_per_pt", [("ft", "nan"), ("ft", "inf"), ("ft", 0), ("ft", -1), ("ft)", 1)])
+def test_scale_from_dict_rejects_bad_values(unit, unit_per_pt):
     with pytest.raises(ValueError):
-        Scale.from_dict({"unit": "ft", "unit_per_pt": unit_per_pt})
+        Scale.from_dict({"unit": unit, "unit_per_pt": unit_per_pt})
 
 
-@pytest.mark.parametrize("raw", ["(garbage)", "(length:abc:ft)", "(bogus:1:ft)", "(length:nan:ft)"])
+@pytest.mark.parametrize("unit, unit_per_pt", [("ft", math.nan), ("ft", 0), ("ft)", 1)])
+def test_scale_rejects_bad_values_however_it_is_built(unit, unit_per_pt):
+    with pytest.raises(ValueError):
+        Scale(unit, unit_per_pt)
+
+
+@pytest.mark.parametrize("raw", ["(garbage)", "(length:abc:ft)", "(bogus:1:ft)", "(length:nan:ft)",
+                                 "(length:1:ft/A)"])
 def test_malformed_measure_is_listed_as_non_measurement(pdf, raw):
     doc = Document(pdf)
     doc.add_length(0, [(72, 72), (144, 72)], label=False)
@@ -147,4 +150,4 @@ def test_malformed_measure_is_listed_as_non_measurement(pdf, raw):
     (m,) = doc.markups()
     assert m.measurement() is None
     assert doc.takeoff() == {}
-    doc.takeoff_by_subject()
+    assert doc.takeoff_by_subject() == {}
