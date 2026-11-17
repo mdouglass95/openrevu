@@ -32,22 +32,28 @@ def print_document(printer, doc, progress: Callable[[int, int], bool] | None = N
         page = doc.doc[i].rect
         zoom = min(vp.width() / page.width, vp.height() / page.height)
         plan.append((i, zoom, _bands(page, zoom)))
-    total, done = sum(len(b) for _, _, b in plan), 0
-    try:
-        if progress and not progress(0, total):
-            printer.abort()
-            return False
+    total = sum(len(b) for _, _, b in plan)
+
+    def draw_bands():
+        """Yield the number of bands drawn so far: 0, then after each band."""
+        done = 0
+        yield done
         for i, zoom, bands in plan:
             if i:
                 printer.newPage()
             for band in bands:
                 pix = doc.render(i, zoom, clip=band)
-                img = QtGui.QImage(pix.samples, pix.width, pix.height, pix.stride, QtGui.QImage.Format_RGB888)
+                # samples_mv shares the pixmap's memory, so the band is not copied
+                img = QtGui.QImage(pix.samples_mv, pix.width, pix.height, pix.stride, QtGui.QImage.Format_RGB888)
                 painter.drawImage(vp.x() + pix.x, vp.y() + pix.y, img)
                 done += 1
-                if progress and not progress(done, total):
-                    printer.abort()
-                    return False
+                yield done
+
+    try:
+        for done in draw_bands():
+            if progress and not progress(done, total):
+                printer.abort()
+                return False
         return True
     finally:
         painter.end()
