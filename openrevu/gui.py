@@ -850,9 +850,17 @@ class Main(DocumentOps, W.QMainWindow):
         for lbl in (self.lbl_scale, self.lbl_page, self.lbl_zoom):
             lbl.setStyleSheet("padding: 0 10px;")
             sb.addPermanentWidget(lbl)
+        self.lbl_restricted = W.QLabel("This PDF restricts editing")
+        self.lbl_restricted.setStyleSheet("padding: 0 10px; color: white; background: #b35900;")
+        self.lbl_restricted.setToolTip("The author of this PDF does not allow markups or changes. You can still add them, "
+                                       "but Save asks for a new file name, so the original stays as issued. "
+                                       "The copy keeps the same restrictions.")
+        self.lbl_restricted.hide()
+        sb.addPermanentWidget(self.lbl_restricted)
 
     def _update_status_widgets(self):
         cv = self.cv
+        self.lbl_restricted.setVisible(bool(cv) and cv.doc.restricted)
         if not cv:
             for lbl in (self.lbl_scale, self.lbl_page, self.lbl_zoom):
                 lbl.setText("")
@@ -896,7 +904,10 @@ class Main(DocumentOps, W.QMainWindow):
         except Exception as e:  # unreadable or corrupt file
             return W.QMessageBox.critical(self, "Open failed", str(e))
         self.prefs.add_recent(path)
+        d.save_as_required = d.restricted     # never overwrite a restricted PDF as issued: Save asks for a new name
         self._attach(d, os.path.basename(path))
+        if d.restricted:
+            self.statusBar().showMessage("This PDF restricts editing. Save will ask for a new file name.")
 
     def _attach(self, d: Document, title):
         cv = Canvas(d)
@@ -966,13 +977,15 @@ class Main(DocumentOps, W.QMainWindow):
 
     def _save(self, d: Document) -> bool:
         try:
-            if d.path:
+            if d.path and not getattr(d, "save_as_required", False):
                 d.save()
             else:
-                p, _ = W.QFileDialog.getSaveFileName(self, "Save", getattr(d, "suggested_path", None) or "", "PDF (*.pdf)")
+                title = "Save a copy (this PDF restricts editing)" if d.restricted else "Save"
+                p, _ = W.QFileDialog.getSaveFileName(self, title, getattr(d, "suggested_path", None) or "", "PDF (*.pdf)")
                 if not p:
                     return False
                 d.save(p)
+                d.save_as_required = False
                 self.tabs.setTabText(self.tabs.currentIndex(), os.path.basename(p))
                 self.prefs.add_recent(p)
         except ERRORS as e:
@@ -996,6 +1009,7 @@ class Main(DocumentOps, W.QMainWindow):
             if p:
                 self.cv.select(None)
                 if self._run(self.doc.save, p, msg=f"Saved {p}"):
+                    self.doc.save_as_required = False
                     recovery.remove(self.doc.recovery_id)
                     self._autosave_rev.pop(self.doc.recovery_id, None)
                     self.tabs.setTabText(self.tabs.currentIndex(), os.path.basename(p))

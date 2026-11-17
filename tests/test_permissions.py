@@ -1,5 +1,6 @@
 """PDF permissions and passwords survive a save (issue #5)."""
 import fitz
+import pytest
 
 from openrevu.core import Document
 
@@ -93,3 +94,44 @@ def test_a_compare_overlay_of_a_protected_pdf_has_no_guessable_owner_password(tm
     compare_documents(src, src, out, old_password="user-pw", new_password="user-pw")
     assert fitz.open(out).needs_pass
     assert not owner_rights(out, "user-pw-owner")
+
+
+# ---------- GUI: the restriction notice and Save making a copy ----------
+@pytest.fixture(scope="module")
+def app():
+    W = pytest.importorskip("PyQt5.QtWidgets")
+    return W.QApplication.instance() or W.QApplication([])
+
+
+@pytest.fixture
+def gui(app, tmp_path):
+    from openrevu.gui import Main
+    plain = fitz.open(); plain.new_page(); plain.save(str(tmp_path / "plain.pdf"))
+    w = Main(str(tmp_path / "plain.pdf")); w.show()
+    app.processEvents()
+    return w
+
+
+def test_a_restricted_pdf_shows_a_notice(gui, tmp_path):
+    assert gui.lbl_restricted.isHidden()
+    gui.open(make_pdf(tmp_path / "issued.pdf"))
+    assert not gui.lbl_restricted.isHidden() and "restricts editing" in gui.lbl_restricted.text()
+    gui.tabs.setCurrentIndex(0)                               # back to the unrestricted file
+    assert gui.lbl_restricted.isHidden()
+
+
+def test_saving_a_restricted_pdf_asks_for_a_new_file_name(gui, tmp_path, monkeypatch):
+    from PyQt5 import QtWidgets as W
+    src = make_pdf(tmp_path / "issued.pdf")
+    before = open(src, "rb").read()
+    gui.open(src)
+    gui.doc.add_rect(0, fitz.Rect(10, 10, 50, 50))
+    copy = str(tmp_path / "copy.pdf")
+    asked = []
+    monkeypatch.setattr(W.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (asked.append(a[1]) or copy, "")))
+    gui.save()
+    assert asked and open(src, "rb").read() == before         # the issued file is untouched
+    assert len(Document(copy).markups()) == 1 and Document(copy).restricted
+    gui.doc.add_rect(0, fitz.Rect(60, 60, 90, 90))
+    gui.save()                                                # the copy is saved in place, without asking again
+    assert len(asked) == 1 and len(Document(copy).markups()) == 2
