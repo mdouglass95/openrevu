@@ -26,3 +26,9 @@ packages = ["openrevu"]
 
 [tool.setuptools.package-data]
 openrevu = ["icons_svg/*.svg", "icons_svg/LICENSE*"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+xfail_strict = true
