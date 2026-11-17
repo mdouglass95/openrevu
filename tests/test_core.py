@@ -1,5 +1,6 @@
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+import json
 import math
 
 import fitz
@@ -111,3 +112,39 @@ def test_csv_and_render(pdf, tmp_path):
     assert len(rows) == 3 and "Length" in rows[1]
     pix = doc.render(0, 1.5)
     assert pix.width == pytest.approx(612 * 1.5, abs=1)
+
+
+def _set_scales_keyword(path, blob):
+    d = fitz.open(path)
+    d.set_metadata({"keywords": "OpenRevu-scales=" + json.dumps(blob)})
+    d.saveIncr()
+    d.close()
+
+
+def test_injected_scale_unit_falls_back_to_default_and_adds_no_action(pdf):
+    evil = "ft)/A<</S/URI/URI(https://evil.example)>>/X("
+    _set_scales_keyword(pdf, {"default": {"unit": evil, "unit_per_pt": 0.01}, "pages": {}})
+    doc = Document(pdf)
+    assert doc.default_scale == Scale()
+    doc.add_length(0, [(72, 72), (144, 72)], label=False)
+    (m,) = doc.markups()
+    assert doc.doc.xref_get_key(m.xref, "A") == ("null", "null")
+    assert m.measurement()[2] == "ft"
+
+
+@pytest.mark.parametrize("unit_per_pt", ["nan", "inf", 0, -1])
+def test_scale_from_dict_rejects_bad_unit_per_pt(unit_per_pt):
+    with pytest.raises(ValueError):
+        Scale.from_dict({"unit": "ft", "unit_per_pt": unit_per_pt})
+
+
+@pytest.mark.parametrize("raw", ["(garbage)", "(length:abc:ft)", "(bogus:1:ft)", "(length:nan:ft)"])
+def test_malformed_measure_is_listed_as_non_measurement(pdf, raw):
+    doc = Document(pdf)
+    doc.add_length(0, [(72, 72), (144, 72)], label=False)
+    (m,) = doc.markups()
+    doc.doc.xref_set_key(m.xref, "OR_Measure", raw)
+    (m,) = doc.markups()
+    assert m.measurement() is None
+    assert doc.takeoff() == {}
+    doc.takeoff_by_subject()

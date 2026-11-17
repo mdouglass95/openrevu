@@ -29,6 +29,7 @@ COLUMN_TYPES = ("text", "number", "choice")
 BASE_COLUMNS = ("Page", "Subject", "Type", "Author", "Status", "Comment", "Value")
 RECREATABLE_KINDS = {"Square", "Circle", "Line", "PolyLine", "Polygon", "Ink", "FreeText", "Text"}  # can be copied / saved as tools
 RESIZABLE_MEASURES = {"length", "perimeter", "area", "volume", "diameter", "angle"}
+MEASURE_KINDS = RESIZABLE_MEASURES | {"count"}
 
 
 @dataclass
@@ -64,7 +65,13 @@ class Scale:
 
     @classmethod
     def from_dict(cls, d) -> "Scale":
-        return cls(d["unit"], float(d["unit_per_pt"]))
+        # The dict comes from untrusted PDF metadata, and the unit is later written into a PDF string literal.
+        unit, unit_per_pt = d["unit"], float(d["unit_per_pt"])
+        if unit not in UNITS:
+            raise ValueError(f"unknown unit {unit!r}")
+        if not math.isfinite(unit_per_pt) or unit_per_pt <= 0:
+            raise ValueError(f"invalid unit_per_pt {unit_per_pt!r}")
+        return cls(unit, unit_per_pt)
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict())
@@ -206,8 +213,14 @@ class Markup:
         v = _xget(self.d.doc, self.xref, MEASURE_KEY)
         if not v:
             return None
-        kind, val, unit = v.split(":", 2)
-        return kind, float(val), unit
+        try:  # OR_Measure comes from the PDF, so a hand-edited or foreign file can hold anything
+            kind, val, unit = v.split(":", 2)
+            val = float(val)
+        except ValueError:
+            return None
+        if kind not in MEASURE_KINDS or not math.isfinite(val):
+            return None
+        return kind, val, unit
 
     def custom(self) -> dict:
         """Values of the custom columns that are set on this markup."""
