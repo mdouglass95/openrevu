@@ -115,9 +115,9 @@ def test_zoom_without_an_anchor_keeps_the_viewport_centre_in_place(app, tmp_path
     assert moved(cv, centre, pt) < 2
 
 
-def ctrl_wheel(cv, pos, steps=1):
+def ctrl_wheel(cv, pos):
     ev = QtGui.QWheelEvent(QtCore.QPointF(pos), QtCore.QPointF(cv.viewport().mapToGlobal(pos)), QtCore.QPoint(0, 0),
-                           QtCore.QPoint(0, 120 * steps), QtCore.Qt.NoButton, QtCore.Qt.ControlModifier,
+                           QtCore.QPoint(0, 120), QtCore.Qt.NoButton, QtCore.Qt.ControlModifier,
                            QtCore.Qt.NoScrollPhase, False)
     QtWidgets.QApplication.sendEvent(cv.viewport(), ev)
 
@@ -143,3 +143,13 @@ def test_rapid_ctrl_wheel_zooms_at_the_cursor_with_a_single_full_render(app, tmp
     assert cv.zoom == pytest.approx(1.25 * 1.15 ** 10)
     assert cv.transform().isIdentity()
     assert moved(cv, anchor, pt) < 2
+
+
+def test_fit_page_shows_the_whole_current_page(app, tmp_path):
+    cv = make_canvas(tmp_path, pages=[(612, 792)] * 3)
+    cv.set_zoom(3.0)
+    cv.goto_page(1, y_offset=300)
+    cv.fit_page()
+    assert cv.current_page() == 1
+    shown = cv.mapFromScene(cv._rects[1]).boundingRect()
+    assert cv.viewport().rect().contains(shown)
