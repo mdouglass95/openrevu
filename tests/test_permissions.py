@@ -143,3 +143,22 @@ def test_a_compare_overlay_of_a_restricted_pdf_keeps_its_permissions(tmp_path):
     out = str(tmp_path / "overlay.pdf")
     compare_documents(src, src, out)
     assert user_permissions(out) == user_permissions(src)
+
+
+def test_an_autosave_snapshot_of_a_restricted_pdf_keeps_its_permissions(gui, tmp_path, isolated_recovery_dir):
+    src = make_pdf(tmp_path / "issued.pdf")
+    gui.open(src)
+    gui.doc.add_rect(0, fitz.Rect(10, 10, 50, 50)); gui._after_change()
+    assert gui.autosave_now() == 1
+    snap = next(isolated_recovery_dir.glob("*.pdf"))
+    assert user_permissions(str(snap)) == user_permissions(src)
+    assert Document(str(snap)).restricted                     # a recovered copy is still restricted
+
+
+def test_a_compare_overlay_keeps_the_password_when_only_the_other_input_is_restricted(tmp_path):
+    from openrevu.compare import compare_documents
+    restricted = make_pdf(tmp_path / "issued.pdf")
+    protected = make_pdf(tmp_path / "both.pdf", user_pw="secret")
+    out = str(tmp_path / "overlay.pdf")
+    compare_documents(restricted, protected, out, new_password="secret")
+    assert fitz.open(out).needs_pass and fitz.open(out).authenticate("secret")

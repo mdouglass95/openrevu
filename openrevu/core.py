@@ -488,7 +488,7 @@ class Document(SheetOps, PageOps):
             raise PermissionError("password required or incorrect")
         self.path = path
         self._password = password if encrypted else None  # re-applied on save so protection is never silently dropped
-        is_owner = bool(auth & 4)
+        is_owner = bool(auth & 4)                # authenticate() sets bit 4 for the owner password
         # What this user may do: everything for an unencrypted file or the owner, else what the file allows.
         self._allowed = -1 if self._permissions is None or is_owner else self._permissions
         self._owner_pw = password if is_owner else secrets.token_urlsafe(24)   # used only if the file is encrypted
