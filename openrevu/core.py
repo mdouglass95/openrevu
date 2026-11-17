@@ -216,9 +216,9 @@ class Markup:
         try:  # OR_Measure comes from the PDF, so a hand-edited or foreign file can hold anything
             kind, val, unit = v.split(":", 2)
             val = float(val)
-            if kind not in MEASURE_KINDS or unit not in MEASURE_UNITS or not math.isfinite(val):
-                raise ValueError(v)
         except ValueError:
+            return None
+        if kind not in MEASURE_KINDS or unit not in MEASURE_UNITS or not math.isfinite(val):
             return None
         return kind, val, unit
 

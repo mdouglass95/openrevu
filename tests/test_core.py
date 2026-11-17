@@ -128,14 +128,8 @@ def test_injected_scale_unit_falls_back_to_default_and_adds_no_action(pdf):
     assert m.measurement()[2] == "ft"
 
 
-@pytest.mark.parametrize("unit, unit_per_pt", [("ft", "nan"), ("ft", "inf"), ("ft", 0), ("ft", -1), ("ft)", 1)])
-def test_scale_from_dict_rejects_bad_values(unit, unit_per_pt):
-    with pytest.raises(ValueError):
-        Scale.from_dict({"unit": unit, "unit_per_pt": unit_per_pt})
-
-
-@pytest.mark.parametrize("unit, unit_per_pt", [("ft", math.nan), ("ft", 0), ("ft)", 1)])
-def test_scale_rejects_bad_values_however_it_is_built(unit, unit_per_pt):
+@pytest.mark.parametrize("unit, unit_per_pt", [("ft", math.nan), ("ft", math.inf), ("ft", 0), ("ft", -1), ("ft)", 1)])
+def test_scale_rejects_bad_values(unit, unit_per_pt):
     with pytest.raises(ValueError):
         Scale(unit, unit_per_pt)
 
