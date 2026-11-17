@@ -120,6 +120,34 @@ def test_a_blank_signature_field_is_not_signed(pdf, tmp_path):
     assert not Document(str(out)).signed
 
 
+def _without_sigflags(src, dst):
+    d = fitz.open(src)
+    d.xref_set_key(d.pdf_catalog(), "AcroForm/SigFlags", "null")
+    d.save(dst)
+    assert fitz.open(dst).get_sigflags() <= 0
+    return str(dst)
+
+
+def test_a_signed_pdf_without_sigflags_is_still_signed(signed_pdf, tmp_path):
+    assert Document(_without_sigflags(signed_pdf, tmp_path / "noflags.pdf")).signed
+
+
+def test_a_signed_field_nested_in_the_field_tree_counts(pdf, tmp_path):
+    # Approvals (no /FT) > Seal (/FT /Sig) > widget with the /V; the type is inherited from Seal
+    d = fitz.open(pdf)
+    sig, group, field, kid = (d.get_new_xref() for _ in range(4))
+    d.update_object(sig, "<</Type/Sig/Filter/Adobe.PPKLite/SubFilter/adbe.pkcs7.detached/ByteRange[0 0 0 0]/Contents<00>>>")
+    d.update_object(group, f"<</T(Approvals)/Kids[{field} 0 R]>>")
+    d.update_object(field, f"<</FT/Sig/T(Seal)/Parent {group} 0 R/Kids[{kid} 0 R]>>")
+    d.update_object(kid, f"<</Type/Annot/Subtype/Widget/Rect[40 40 240 100]/Parent {field} 0 R/P {d[0].xref} 0 R"
+                         f"/V {sig} 0 R>>")
+    d.xref_set_key(d[0].xref, "Annots", f"[{kid} 0 R]")
+    d.xref_set_key(d.pdf_catalog(), "AcroForm", f"<</Fields[{group} 0 R]>>")
+    out = tmp_path / "nested.pdf"
+    d.save(out)
+    assert Document(str(out)).signed
+
+
 def test_csv_and_render(pdf, tmp_path):
     doc = Document(pdf)
     doc.add_length(0, [(0, 0), (72, 0)], label=False)
