@@ -153,3 +153,35 @@ def test_fit_page_shows_the_whole_current_page(app, tmp_path):
     assert cv.current_page() == 1
     shown = cv.mapFromScene(cv._rects[1]).boundingRect()
     assert cv.viewport().rect().contains(shown)
+
+
+def test_an_edit_during_a_wheel_zoom_settles_it_at_once_instead_of_blanking_the_page(app, tmp_path):
+    cv = make_canvas(tmp_path)
+    cv.set_zoom(2.0)
+    anchor = QtCore.QPoint(400, 300)
+    ctrl_wheel(cv, anchor)
+    cv.invalidate()                                       # e.g. a markup was just added
+    assert cv.zoom == pytest.approx(2.0 * 1.15) and cv.transform().isIdentity()
+    assert pixmap_bytes(cv) > 0
+
+
+def test_ctrl_wheel_beyond_the_zoom_limit_does_nothing(app, tmp_path, monkeypatch):
+    cv = make_canvas(tmp_path)
+    cv.set_zoom(8.0)
+    layouts, real_relayout = [], Canvas.relayout
+    monkeypatch.setattr(Canvas, "relayout", lambda self: layouts.append(1) or real_relayout(self))
+    ctrl_wheel(cv, QtCore.QPoint(400, 300))
+    QtTest.QTest.qWait(300)
+    assert layouts == [] and cv.zoom == 8.0
+
+
+def test_scrolling_with_the_wheel_during_a_wheel_zoom_settles_it_first(app, tmp_path):
+    cv = make_canvas(tmp_path)
+    cv.set_zoom(2.0)
+    ctrl_wheel(cv, QtCore.QPoint(400, 300))
+    pos = QtCore.QPointF(400, 300)
+    QtWidgets.QApplication.sendEvent(cv.viewport(), QtGui.QWheelEvent(
+        pos, QtCore.QPointF(cv.viewport().mapToGlobal(pos.toPoint())), QtCore.QPoint(), QtCore.QPoint(0, -120),
+        QtCore.Qt.NoButton, QtCore.Qt.NoModifier, QtCore.Qt.NoScrollPhase, False))
+    assert cv.zoom == pytest.approx(2.0 * 1.15) and cv.transform().isIdentity()
+    assert pixmap_bytes(cv) > 0

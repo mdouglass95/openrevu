@@ -68,8 +68,8 @@ class Canvas(W.QGraphicsView):
         self._cur_page = 0
         self._hold_render = False  # while True, render_visible does nothing (a zoom is in progress)
         self._wheel_zoom = None    # (zoom, viewport position) of a wheel zoom waiting to settle
-        self._settle = QtCore.QTimer(self, singleShot=True, interval=ZOOM_SETTLE_MS)
-        self._settle.timeout.connect(lambda: self.set_zoom(*self._wheel_zoom))
+        self._settle_timer = QtCore.QTimer(self, singleShot=True, interval=ZOOM_SETTLE_MS)
+        self._settle_timer.timeout.connect(self._settle_wheel_zoom)
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
         self.horizontalScrollBar().valueChanged.connect(self.render_visible)
         self.relayout()
@@ -84,6 +84,8 @@ class Canvas(W.QGraphicsView):
 
     # ---------- layout & rendering ----------
     def relayout(self):
+        if self._wheel_zoom:                              # finish the wheel zoom; it lays out anyway
+            return self._settle_wheel_zoom()
         self.scene().clear()
         self._pix.clear()
         self._detail.clear()
@@ -148,14 +150,14 @@ class Canvas(W.QGraphicsView):
         if seen.isEmpty() or (old is not None and old.sceneBoundingRect().adjusted(-1, -1, 1, 1).contains(seen)):
             return
         if old is not None:
-            self.scene().removeItem(self._detail.pop(i))
+            self.scene().removeItem(old)
         mx, my = view.width() * DETAIL_MARGIN, view.height() * DETAIL_MARGIN
         area = view.adjusted(-mx, -my, mx, my).intersected(page).translated(-page.topLeft())
         z = self.zoom
         clip = fitz.Rect(area.left() / z, area.top() / z, area.right() / z, area.bottom() / z)
         self._detail[i] = self._add_pixmap(i, z * self._dpr(), 2, clip)
 
-    def _add_pixmap(self, i, scale, z, clip=None):
+    def _add_pixmap(self, i, scale, z_value, clip=None):
         pix = self.doc.render(i, scale, clip)
         img = QtGui.QImage(pix.samples_mv, pix.width, pix.height, pix.stride, QtGui.QImage.Format_RGB888)
         qpix = QtGui.QPixmap.fromImage(img.copy())
@@ -163,7 +165,7 @@ class Canvas(W.QGraphicsView):
         qpix.setDevicePixelRatio(ratio)
         item = self.scene().addPixmap(qpix)
         item.setPos(self._rects[i].topLeft() + QtCore.QPointF(pix.x, pix.y) / ratio)
-        item.setZValue(z)
+        item.setZValue(z_value)
         return item
 
     def _drop(self, i):
@@ -173,6 +175,8 @@ class Canvas(W.QGraphicsView):
 
     def invalidate(self, pages=None):
         """Re-render pages (all if None) after an edit."""
+        if self._wheel_zoom:                              # the settled zoom renders every page afresh
+            return self._settle_wheel_zoom()
         for i in list(self._pix) if pages is None else pages:
             self._drop(i)
         self.render_visible()
@@ -223,7 +227,7 @@ class Canvas(W.QGraphicsView):
     def _zoom_to(self, z, pos, keep):
         """Zoom to z, then scroll so `keep` (page, PDF point) is at viewport position pos. Renders once."""
         z = max(ZOOM_MIN, min(ZOOM_MAX, z))
-        self._settle.stop()
+        self._settle_timer.stop()
         self._wheel_zoom = None
         self._hold_render = True                          # render once, at the final scroll position
         try:
@@ -714,17 +718,25 @@ class Canvas(W.QGraphicsView):
         if ev.modifiers() & QtCore.Qt.ControlModifier:
             # scale what is on screen now, keeping the point under the cursor in place; render when the wheel stops
             pos = ev.pos()
-            z = self._wheel_zoom[0] if self._wheel_zoom else self.zoom
-            z = max(ZOOM_MIN, min(ZOOM_MAX, z * (1.15 if ev.angleDelta().y() > 0 else 1 / 1.15)))
+            now = self._wheel_zoom[0] if self._wheel_zoom else self.zoom
+            z = max(ZOOM_MIN, min(ZOOM_MAX, now * (1.15 if ev.angleDelta().y() > 0 else 1 / 1.15)))
+            if z == now:                                  # already at the limit
+                return
             keep = self._doc_point(pos)
             self._wheel_zoom = (z, pos)
             self._hold_render = True
             self.setTransform(QtGui.QTransform.fromScale(z / self.zoom, z / self.zoom))
             if keep is not None:
                 self._put_under(pos, *keep)
-            self._settle.start()
+            self._settle_timer.start()
         else:
+            self._settle_wheel_zoom()
             super().wheelEvent(ev)
+
+    def _settle_wheel_zoom(self):
+        """Lay out and render at the zoom the wheel asked for (when a wheel zoom is waiting)."""
+        if self._wheel_zoom:
+            self.set_zoom(*self._wheel_zoom)
 
     def keyPressEvent(self, ev):
         if ev.key() == QtCore.Qt.Key_Escape:

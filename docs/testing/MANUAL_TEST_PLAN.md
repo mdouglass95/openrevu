@@ -115,7 +115,7 @@ clearly. Type `test123`. Expect it to open.
 **T06 Zoom.** Use the zoom box (type `150`, press Enter), the **+** and **−** buttons, Ctrl+mouse wheel, **Fit width**, and
 **Fit page**. Expect the zoom box and the status bar to agree. The page must stay sharp, not blurry.
 Type nonsense in the zoom box: expect the old value to come back.
-Ctrl+mouse wheel zooms around the mouse pointer: the grid label under the pointer stays under it. While you turn the wheel
+Ctrl+mouse wheel zooms around the mouse pointer: the word or line under the pointer stays under it. While you turn the wheel
 the picture may look soft; it must turn sharp a moment after you stop. The **+** and **−** buttons and the zoom box keep
 whatever is in the middle of the view in the middle.
 
