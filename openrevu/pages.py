@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime
 import os
+import secrets
 import shutil
 
 import pymupdf as fitz  # PyMuPDF
@@ -331,9 +332,11 @@ class PageOps:
             perm |= fitz.PDF_PERM_COPY
         if allow_modify:
             perm |= fitz.PDF_PERM_MODIFY | fitz.PDF_PERM_ANNOTATE | fitz.PDF_PERM_FORM
+        if self._permissions is not None and not self._is_owner:
+            perm &= self._permissions          # a copy never allows more than the file's author allowed
         self._store_scales()
         self.doc.save(path, encryption=fitz.PDF_ENCRYPT_AES_256, user_pw=user_pw,
-                      owner_pw=owner_pw or user_pw + "-owner", permissions=perm, garbage=3, deflate=True)
+                      owner_pw=owner_pw or secrets.token_urlsafe(24), permissions=perm, garbage=3, deflate=True)
 
     @mutates
     def set_metadata(self, **fields):
