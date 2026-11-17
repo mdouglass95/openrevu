@@ -93,6 +93,7 @@ f.save(f"{OUT}/form.pdf")
 def make_signed():
     import datetime
     import tempfile
+    from pathlib import Path
 
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
@@ -107,10 +108,9 @@ def make_signed():
             .serial_number(1).not_valid_before(now - datetime.timedelta(days=1))
             .not_valid_after(now + datetime.timedelta(days=3650)).sign(key, hashes.SHA256()))
     with tempfile.TemporaryDirectory() as tmp:
-        p12 = os.path.join(tmp, "id.p12")
-        with open(p12, "wb") as fh:
-            fh.write(pkcs12.serialize_key_and_certificates(b"id", key, cert, None, serialization.BestAvailableEncryption(b"pw")))
-        sign_pdf(f"{OUT}/plan_v1.pdf", f"{OUT}/signed.pdf", p12, "pw", reason="Sealed for permit")
+        p12 = Path(tmp) / "id.p12"
+        p12.write_bytes(pkcs12.serialize_key_and_certificates(b"id", key, cert, None, serialization.BestAvailableEncryption(b"pw")))
+        sign_pdf(Path(OUT) / "plan_v1.pdf", Path(OUT) / "signed.pdf", str(p12), "pw", reason="Sealed for permit")
 make_signed()
 
 expected = {

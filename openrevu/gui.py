@@ -992,11 +992,14 @@ class Main(DocumentOps, W.QMainWindow):
             if in_place:
                 d.save()
             else:
-                p, _ = W.QFileDialog.getSaveFileName(self, "Save", getattr(d, "suggested_path", None) or "", "PDF (*.pdf)")
+                # a signed document's suggested path is its signed original: overwriting it is what the warning is about
+                start = "" if d.signed else getattr(d, "suggested_path", None) or ""
+                p, _ = W.QFileDialog.getSaveFileName(self, "Save", start, "PDF (*.pdf)")
                 if not p:
                     return False
                 d.save(p)
-                self.tabs.setTabText(self.tabs.currentIndex(), os.path.basename(p))
+                tab = next(i for i in range(self.tabs.count()) if getattr(self.tabs.widget(i), "doc", None) is d)
+                self.tabs.setTabText(tab, os.path.basename(p))   # closing a background tab saves a doc that is not current
                 self.prefs.add_recent(p)
         except ERRORS as e:
             W.QMessageBox.warning(self, "Save failed", str(e))

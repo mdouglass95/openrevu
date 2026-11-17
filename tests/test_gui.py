@@ -745,3 +745,26 @@ def test_after_save_as_a_signed_pdf_saves_to_the_copy_without_asking(signed_win,
     w.save()
     assert seen["asked"] == 0 and len(Document(copy).markups()) == 1
     assert Path(signed_pdf).read_bytes() == original
+
+
+def test_save_as_from_the_close_question_renames_no_other_tab(signed_win, monkeypatch, tmp_path):
+    w = signed_win
+    other = tmp_path / "other.pdf"
+    d = fitz.open(); d.new_page(); d.save(other)
+    w.open(str(other))                                  # the signed tab is now in the background
+    w.tabs.widget(0).doc.add_rect(0, fitz.Rect(100, 100, 200, 200))
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(lambda *a, **k: QtWidgets.QMessageBox.Save))
+    answer_with(monkeypatch, "Save As…")
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(tmp_path / "copy.pdf"), "")))
+    w.close_tab(0)
+    assert [w.tabs.tabText(i) for i in range(w.tabs.count())] == ["other.pdf"]
+
+
+def test_a_recovered_signed_pdf_does_not_offer_its_signed_original_as_the_file_name(signed_win, signed_pdf, monkeypatch, tmp_path):
+    w = signed_win
+    w.doc.path, w.doc.suggested_path = None, signed_pdf   # what offer_recovery sets up
+    asked = {}
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName",
+                        staticmethod(lambda parent, title, start, *a: asked.update(start=start) or ("", "")))
+    w.save()
+    assert asked["start"] != signed_pdf
