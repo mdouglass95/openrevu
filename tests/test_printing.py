@@ -128,12 +128,12 @@ def test_reports_progress_and_stops_when_cancelled(app, tmp_path, monkeypatch):
 # Runs in a fresh process, so the peak resident memory it reports belongs to this print job alone.
 PRINT_ARCH_E_AT_1200_DPI = r'''
 import json, sys
+from pathlib import Path
 import pymupdf as fitz
 from PyQt5 import QtWidgets
 sys.path.insert(0, sys.argv[1])
 from test_printing import make_doc, pdf_printer
 from openrevu.printing import print_document
-from pathlib import Path
 
 
 def peak_rss_mb():
@@ -152,12 +152,16 @@ def peak_rss_mb():
         if not psapi.GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(c), c.cb):
             return None
         return c.PeakWorkingSetSize / 2 ** 20
+    status = Path("/proc/self/status")
+    if status.exists():   # Linux. getrusage() would also count the parent's memory at fork: Linux keeps it across exec.
+        for line in status.read_text().splitlines():
+            if line.startswith("VmHWM:"):
+                return int(line.split()[1]) / 2 ** 10   # KiB
     try:
         import resource
     except ImportError:
         return None
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return peak / 2 ** 20 if sys.platform == "darwin" else peak / 2 ** 10   # bytes on macOS, KiB on Linux
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2 ** 20   # bytes on macOS
 
 
 app = QtWidgets.QApplication([])
@@ -181,6 +185,8 @@ def test_printing_arch_e_at_1200_dpi_keeps_peak_memory_low(tmp_path):
     res = json.loads(r.stdout.strip().splitlines()[-1])
     if res["peak"] is None:
         pytest.skip("no way to read peak memory on this platform")
+    if res["before"] > 300:   # Qt and PyMuPDF alone take about 90 MB
+        pytest.skip(f"peak memory before printing is {res['before']:.0f} MB: it includes the parent process")
     print(f"peak RSS {res['peak']:.0f} MB (before printing {res['before']:.0f} MB)")
     assert res["pages"] == 1
     assert res["peak"] < 500
