@@ -234,3 +234,22 @@ def test_print_progress_dialog_cancel_stops_the_job(app, tmp_path, print_to, mon
     w.print_doc()
     assert w.statusBar().currentMessage() == "Printing cancelled."
     assert made == []
+
+
+def test_print_progress_dialog_goes_away_when_printing_fails(app, tmp_path, print_to, monkeypatch):
+    w = open_window(app, tmp_path)
+    print_to(tmp_path / "printed.pdf")
+    show_at_once = QtWidgets.QProgressDialog.setMinimumDuration
+    monkeypatch.setattr(QtWidgets.QProgressDialog, "setMinimumDuration", lambda self, ms: show_at_once(self, 0))
+
+    render = w.doc.render
+
+    def fail_on_second_page(pno, *a, **k):
+        if pno == 0:
+            return render(pno, *a, **k)
+        assert w.findChildren(QtWidgets.QProgressDialog)[0].isVisible()
+        raise RuntimeError("render failed")
+    monkeypatch.setattr(w.doc, "render", fail_on_second_page)
+    with pytest.raises(RuntimeError):
+        w.print_doc()
+    assert not [d for d in w.findChildren(QtWidgets.QProgressDialog) if d.isVisible()]
