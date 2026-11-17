@@ -55,6 +55,7 @@ Optional programs (tests that need them say so):
 | `scanned.pdf` | A page that is only a picture of the text `INVOICE TOTAL 4500` |
 | `rotated.pdf` | A sheet with a 90 degree page rotation |
 | `many_pages.pdf` | 60 sheets, for speed |
+| `large_sheet.pdf` | One 36 x 24 in sheet with a 1 in grid; each square is labelled with its column and row, like `12,7` |
 | `form.pdf` | A page with two empty text fields |
 | `tools.btx` | A Bluebeam tool set (made to the community description) with 3 usable tools and 1 stamp |
 
@@ -114,6 +115,14 @@ clearly. Type `test123`. Expect it to open.
 **T06 Zoom.** Use the zoom box (type `150`, press Enter), the **+** and **−** buttons, Ctrl+mouse wheel, **Fit width**, and
 **Fit page**. Expect the zoom box and the status bar to agree. The page must stay sharp, not blurry.
 Type nonsense in the zoom box: expect the old value to come back.
+Ctrl+mouse wheel zooms around the mouse pointer: the grid label under the pointer stays under it. While you turn the wheel
+the picture may look soft; it must turn sharp a moment after you stop. The **+** and **−** buttons and the zoom box keep
+whatever is in the middle of the view in the middle.
+
+**T06b Deep zoom on a large sheet.** Open `large_sheet.pdf`. Put the pointer on one grid label and Ctrl+wheel in until the zoom
+stops growing. Expect: the label stays under the pointer, the text is sharp, and the program does not freeze or crash.
+Scroll the view in all four directions with the scroll bars and the mouse wheel: the grid must stay sharp everywhere, and
+scrolling may pause briefly but must not stutter all the time. Watch the program's memory in your system monitor: it must stay well under 1 GB.
 
 **T07 Pages.** Scroll through the pages. Use the page arrows, the page box (type `3`, Enter), PgUp, PgDown.
 Expect the page number in the toolbar and the status bar to follow what you see.
