@@ -184,3 +184,47 @@ def test_printing_arch_e_at_1200_dpi_keeps_peak_memory_low(tmp_path):
     print(f"peak RSS {res['peak']:.0f} MB (before printing {res['before']:.0f} MB)")
     assert res["pages"] == 1
     assert res["peak"] < 500
+
+
+@pytest.fixture
+def print_to(monkeypatch):
+    """Make File > Print accept its dialog and print to a PDF file instead of a printer."""
+    def setup(path):
+        class Dialog:
+            def __init__(self, printer, parent=None):
+                self.printer = printer
+
+            def exec_(self):
+                self.printer.setOutputFormat(QtPrintSupport.QPrinter.PdfFormat)
+                self.printer.setOutputFileName(str(path))
+                self.printer.setResolution(100)
+                return QtWidgets.QDialog.Accepted
+        monkeypatch.setattr(QtPrintSupport, "QPrintDialog", Dialog)
+    return setup
+
+
+def open_window(app, tmp_path):
+    from openrevu.gui import Main
+    make_doc(tmp_path, n=3)
+    w = Main(str(tmp_path / "in.pdf"))
+    w.show()
+    app.processEvents()
+    return w
+
+
+def test_print_menu_prints_every_page(app, tmp_path, print_to):
+    w = open_window(app, tmp_path)
+    print_to(tmp_path / "printed.pdf")
+    w.print_doc()
+    assert fitz.open(tmp_path / "printed.pdf").page_count == 3
+    assert w.statusBar().currentMessage() == "Printed 3 page(s)."
+
+
+def test_print_progress_dialog_cancel_stops_the_job(app, tmp_path, print_to, monkeypatch):
+    w = open_window(app, tmp_path)
+    print_to(tmp_path / "printed.pdf")
+    monkeypatch.setattr(QtWidgets.QProgressDialog, "wasCanceled", lambda self: True)
+    made = record_renders(w.doc, monkeypatch)
+    w.print_doc()
+    assert w.statusBar().currentMessage() == "Printing cancelled."
+    assert made == []
