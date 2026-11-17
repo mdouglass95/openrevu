@@ -29,6 +29,8 @@ COLUMN_TYPES = ("text", "number", "choice")
 BASE_COLUMNS = ("Page", "Subject", "Type", "Author", "Status", "Comment", "Value")
 RECREATABLE_KINDS = {"Square", "Circle", "Line", "PolyLine", "Polygon", "Ink", "FreeText", "Text"}  # can be copied / saved as tools
 RESIZABLE_MEASURES = {"length", "perimeter", "area", "volume", "diameter", "angle"}
+MEASURE_KINDS = RESIZABLE_MEASURES | {"count"}
+MEASURE_UNITS = set(UNITS) | {"deg", "ea"}  # deg for angles, ea for counts
 
 
 @dataclass
@@ -37,19 +39,24 @@ class Scale:
     unit: str = "ft"
     unit_per_pt: float = 1 / 72 / 12  # 1 pt == 1/72 in, i.e. 1:1 paper
 
+    def __post_init__(self):
+        # Scales can come from untrusted PDF metadata, and the unit is written into PDF string literals.
+        if self.unit not in UNITS:
+            raise ValueError(f"unknown unit {self.unit!r}")
+        if not math.isfinite(self.unit_per_pt) or self.unit_per_pt <= 0:
+            raise ValueError(f"invalid unit_per_pt {self.unit_per_pt!r}")
+
     @classmethod
     def from_calibration(cls, p1, p2, real_length: float, unit: str) -> "Scale":
         d = math.dist(p1, p2)
         if d <= 0 or real_length <= 0:
             raise ValueError("calibration needs two distinct points and a positive length")
-        if unit not in UNITS:
-            raise ValueError(f"unknown unit {unit!r}")
         return cls(unit, real_length / d)
 
     @classmethod
     def from_ratio(cls, paper_in: float, real: float, unit: str) -> "Scale":
         """e.g. 1/4 in on paper = 1 ft real: from_ratio(0.25, 1, 'ft')."""
-        if paper_in <= 0 or real <= 0 or unit not in UNITS:
+        if paper_in <= 0 or real <= 0:
             raise ValueError("invalid ratio")
         return cls(unit, real / (paper_in * 72))
 
@@ -206,8 +213,14 @@ class Markup:
         v = _xget(self.d.doc, self.xref, MEASURE_KEY)
         if not v:
             return None
-        kind, val, unit = v.split(":", 2)
-        return kind, float(val), unit
+        try:  # OR_Measure comes from the PDF, so a hand-edited or foreign file can hold anything
+            kind, val, unit = v.split(":", 2)
+            val = float(val)
+        except ValueError:
+            return None
+        if kind not in MEASURE_KINDS or unit not in MEASURE_UNITS or not math.isfinite(val):
+            return None
+        return kind, val, unit
 
     def custom(self) -> dict:
         """Values of the custom columns that are set on this markup."""
