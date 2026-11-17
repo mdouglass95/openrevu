@@ -109,3 +109,64 @@ def test_large_paper_is_rendered_in_bands_of_bounded_size(app, tmp_path, monkeyp
         assert is_red(pix.pixel(pix.width // 4, y)[:3]), y
     for y in range(int(pix.height * 0.52), int(pix.height * 0.98)):
         assert is_blue(pix.pixel(pix.width * 3 // 4, y)[:3]), y
+
+
+# Runs in a fresh process, so the peak resident memory it reports belongs to this print job alone.
+PRINT_ARCH_E_AT_1200_DPI = r'''
+import json, sys
+import pymupdf as fitz
+from PyQt5 import QtWidgets
+sys.path.insert(0, sys.argv[1])
+from test_printing import make_doc, pdf_printer
+from openrevu.printing import print_document
+from pathlib import Path
+
+
+def peak_rss_mb():
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        class Counters(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD)] + [
+                (n, ctypes.c_size_t) for n in ("PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage",
+                                               "QuotaPagedPoolUsage", "QuotaPeakNonPagedPoolUsage",
+                                               "QuotaNonPagedPoolUsage", "PagefileUsage", "PeakPagefileUsage")]
+        c = Counters(); c.cb = ctypes.sizeof(c)
+        psapi, kernel32 = ctypes.WinDLL("psapi"), ctypes.WinDLL("kernel32")
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        if not psapi.GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(c), c.cb):
+            return None
+        return c.PeakWorkingSetSize / 2 ** 20
+    try:
+        import resource
+    except ImportError:
+        return None
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return peak / 2 ** 20 if sys.platform == "darwin" else peak / 2 ** 10   # bytes on macOS, KiB on Linux
+
+
+app = QtWidgets.QApplication([])
+tmp = Path(sys.argv[2])
+doc = make_doc(tmp, n=1, size=(36 * 72, 48 * 72))
+before = peak_rss_mb()
+print_document(pdf_printer(tmp / "out.pdf", dpi=1200, paper_in=(36, 48)), doc)
+print(json.dumps({"before": before, "peak": peak_rss_mb(), "pages": fitz.open(tmp / "out.pdf").page_count}))
+'''
+
+
+def test_printing_arch_e_at_1200_dpi_keeps_peak_memory_low(tmp_path):
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    r = subprocess.run([sys.executable, "-c", PRINT_ARCH_E_AT_1200_DPI, str(Path(__file__).parent), str(tmp_path)],
+                       capture_output=True, text=True, env=env, timeout=600)
+    assert r.returncode == 0, r.stderr
+    res = json.loads(r.stdout.strip().splitlines()[-1])
+    if res["peak"] is None:
+        pytest.skip("no way to read peak memory on this platform")
+    print(f"peak RSS {res['peak']:.0f} MB (before printing {res['before']:.0f} MB)")
+    assert res["pages"] == 1
+    assert res["peak"] < 500
