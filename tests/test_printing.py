@@ -253,3 +253,17 @@ def test_print_progress_dialog_goes_away_when_printing_fails(app, tmp_path, prin
     with pytest.raises(RuntimeError):
         w.print_doc()
     assert not [d for d in w.findChildren(QtWidgets.QProgressDialog) if d.isVisible()]
+
+
+def test_rotated_page_prints_as_shown(app, tmp_path):
+    # A landscape page turned 90 degrees shows portrait. The band clips are in the shown (rotated) orientation.
+    d = fitz.open()
+    p = d.new_page(width=792, height=612)
+    p.draw_rect(fitz.Rect(0, 0, 396, 306), color=(1, 0, 0), fill=(1, 0, 0))   # top-left quarter before rotation
+    p.set_rotation(90)                                                       # ... is the top-right quarter as shown
+    d.save(tmp_path / "rot.pdf")
+    out = tmp_path / "out.pdf"
+    print_document(pdf_printer(out), Document(str(tmp_path / "rot.pdf")))
+    printed = fitz.open(out)[0]
+    assert is_red(colour_at(printed, 0.8, 0.2))
+    assert not is_red(colour_at(printed, 0.2, 0.2))
