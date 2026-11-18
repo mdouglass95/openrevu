@@ -200,6 +200,12 @@ open area. Click outside every room: expect "region is not enclosed".
 **T28 Measurements panel.** Open the **Measurements** tab. Expect the scale of the page, and a table of totals by subject.
 Click **Export summary (CSV)…** and open the file in a spreadsheet.
 
+**T28a Revu scales and measurements.** Open `tests/data/revu/RevuTest.pdf`, which was calibrated and measured in Bluebeam Revu.
+Expect the status bar to show `Scale: 1 in = 8 ft (viewports on page)`. Measure a length inside each of the two small viewports on the
+right: it must use 1 in = 4 ft. Compare the Markups List and the **Measurements** tab with `RevuTest.csv` in the same folder: the four
+Length Measurements (60', 30', 4', 1'-8"), the two Polylength Measurements (108'-3 1/2", 36'-1"), the Area Measurement (471.48 sq ft)
+and one Count Measurement of 7 must match. Change the page scale, save, close and open the file again: your scale must stay.
+
 **T29 Resize a measurement.** Select an area and drag its corner handle. Expect the label and value to change. Resize an angle.
 A **Count** marker must refuse to resize and say why.
 
