@@ -12,7 +12,7 @@ from PyQt5 import QtWidgets
 
 from openrevu.gui import Main
 from tests.test_sheets import SET_V1, make_set
-from tests.conftest import choose
+from tests.helpers import choose
 
 
 @pytest.fixture(scope="module")

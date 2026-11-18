@@ -7,7 +7,7 @@ import pytest
 from openrevu.core import STATUSES, Document, Scale, angle_deg, format_value
 from openrevu.pages import compare_pdfs
 from openrevu.toolchest import ToolChest
-from tests.conftest import selfsigned
+from tests.helpers import selfsigned
 
 
 def flat(pts):

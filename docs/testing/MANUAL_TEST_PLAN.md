@@ -58,6 +58,7 @@ Optional programs (tests that need them say so):
 | `form.pdf` | A page with two empty text fields |
 | `tools.btx` | A Bluebeam tool set (made to the community description) with 3 usable tools and 1 stamp |
 | `signed.pdf` | A copy of plan_v1 with one digital signature (self-signed). Made only when `pyhanko` and `cryptography` are installed |
+| `signer.p12` | The certificate that signed `signed.pdf`. The passphrase is `test123` |
 
 **The scale of the drawings:** 18 points = 1 foot. Every sheet has a dimension line labelled `20'-0"`. It is
 360 points long, so you can calibrate the scale with it. Room 1 is about 19.9 ft x 14.9 ft = **296 sq ft**.

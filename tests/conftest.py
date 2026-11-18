@@ -50,50 +50,13 @@ def isolated_recovery_dir(tmp_path, monkeypatch):
     return d
 
 
-
-def selfsigned(tmp_path, cn="Test Signer"):
-    """A self-signed certificate: (PKCS#12 file with passphrase "pw", PEM certificate file)."""
-    import datetime
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.hazmat.primitives.serialization import pkcs12
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, cn)])
-    now = datetime.datetime.now(datetime.timezone.utc)
-    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
-            .serial_number(7).not_valid_before(now - datetime.timedelta(days=1))
-            .not_valid_after(now + datetime.timedelta(days=30)).sign(key, hashes.SHA256()))
-    p12 = tmp_path / f"{cn}.p12"
-    p12.write_bytes(pkcs12.serialize_key_and_certificates(b"id", key, cert, None, serialization.BestAvailableEncryption(b"pw")))
-    pem = tmp_path / f"{cn}.pem"
-    pem.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-    return str(p12), str(pem)
-
-
-def choose(monkeypatch, label):
-    """Make the next custom QMessageBox answer with the button called `label`.
-    Returns a dict that receives the text and the default button's text the box showed."""
-    from PyQt5 import QtWidgets
-    shown = {}
-
-    def exec_(self):
-        shown.update(text=self.text(), default=self.defaultButton().text() if self.defaultButton() else None)
-        for b in self.buttons():
-            if b.text() == label:
-                self._clicked = b
-        return 0
-    monkeypatch.setattr(QtWidgets.QMessageBox, "exec_", exec_)
-    monkeypatch.setattr(QtWidgets.QMessageBox, "clickedButton", lambda self: getattr(self, "_clicked", None))
-    return shown
-
-
 @pytest.fixture
 def signed_pdf(tmp_path):
     """A two-page PDF with one valid digital signature (self-signed certificate, signed with pyhanko)."""
     import fitz
 
     from openrevu.sign import sign_pdf
+    from tests.helpers import selfsigned
 
     plain = tmp_path / "unsigned.pdf"
     d = fitz.open()

@@ -107,7 +107,7 @@ def make_signed():
     p12 = os.path.join(OUT, "signer.p12")
     with open(p12, "wb") as fh:
         fh.write(pkcs12.serialize_key_and_certificates(b"id", key, cert, None, serialization.BestAvailableEncryption(b"test123")))
-    sign_pdf(f"{OUT}/plan_v1.pdf", f"{OUT}/signed.pdf", p12, "test123", reason="Sealed for permit")
+    sign_pdf(os.path.join(OUT, "plan_v1.pdf"), os.path.join(OUT, "signed.pdf"), p12, "test123", reason="Sealed for permit")
 
 
 try:

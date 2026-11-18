@@ -995,6 +995,8 @@ class Main(DocumentOps, W.QMainWindow):
                 p, _ = W.QFileDialog.getSaveFileName(self, "Save", getattr(d, "suggested_path", None) or "", "PDF (*.pdf)")
                 if not p:
                     return False
+                if d.path and _same_file(p, d.path):
+                    return self._save(d)  # back to an in-place save, which asks first for a signed PDF
                 d.save(p)
                 self.tabs.setTabText(self.tabs.currentIndex(), os.path.basename(p))
                 self.prefs.add_recent(p)
