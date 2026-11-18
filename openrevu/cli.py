@@ -56,6 +56,9 @@ def main(argv=None) -> int:
                 write_csv(res, a.csv)
             return 0
         d = _doc(a)
+        if d.signed and a.cmd not in ("csv", "summary", "report"):  # these do not copy the input's pages
+            print(f"warning: {a.input} is digitally signed. The signatures in the output will not be valid.",
+                  file=sys.stderr)
         if a.cmd == "merge":
             for m in a.more:
                 d.insert_pdf(m)

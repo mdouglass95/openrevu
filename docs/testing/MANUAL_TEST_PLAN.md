@@ -57,6 +57,7 @@ Optional programs (tests that need them say so):
 | `many_pages.pdf` | 60 sheets, for speed |
 | `form.pdf` | A page with two empty text fields |
 | `tools.btx` | A Bluebeam tool set (made to the community description) with 3 usable tools and 1 stamp |
+| `signed.pdf` | A copy of plan_v1 with one digital signature (self-signed). Made only when `pyhanko` and `cryptography` are installed |
 
 **The scale of the drawings:** 18 points = 1 foot. Every sheet has a dimension line labelled `20'-0"`. It is
 360 points long, so you can calibrate the scale with it. Room 1 is about 19.9 ft x 14.9 ft = **296 sq ft**.
@@ -272,6 +273,14 @@ Everything must be there. Open the saved file in a **different PDF viewer**: the
 On Windows, open the file in a program that locks it (Bluebeam Revu, or Word's PDF view). Add a markup and press Ctrl+S.
 Expect "Save failed: … is it open in another program?". Draw and undo: the tab still works, and no error dialog appears in the
 next 60 seconds. Close the other program and press Ctrl+S: the save works, and no `<file>.tmp` is left.
+
+**T47b Digitally signed PDF.** Open `signed.pdf`. Expect the status bar to say "This PDF is digitally signed. Saving will
+invalidate the signatures." Add a markup and press Ctrl+S. Expect a question with **Save As…** (the default button), **Save anyway**
+and **Cancel**. **Cancel**: nothing is saved and the tab title still starts with `*`. **Save As…**: a file dialog opens, the copy is
+saved, and the tab shows the new name; `signed.pdf` is unchanged. Press Ctrl+S again: no question this time. Open `signed.pdf` again,
+add a markup, choose **File > Save As…** and pick `signed.pdf` itself: the same question appears. Choose **Save anyway**: the
+file is overwritten.
+In a terminal, run `openrevu-cli flatten signed.pdf out.pdf`: expect a `warning: … digitally signed …` line.
 
 **T48 Autosave and recovery.** Start the program with `OPENREVU_AUTOSAVE_SECONDS=5 openrevu`. Open a file, add two markups, wait 10 seconds.
 Kill the program hard (`kill -9 <pid>`, or end the task). Start it again. Expect a question: "OpenRevu closed unexpectedly last time…".

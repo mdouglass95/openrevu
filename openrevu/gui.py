@@ -12,7 +12,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets as W
 
 from . import __version__
 from .canvas import Canvas
-from .core import STATUSES, Document
+from .core import SIGNED_WARNING, STATUSES, Document
 from .gui_ops import ERRORS, DocumentOps, parse_pages  # noqa: F401  (parse_pages re-exported)
 from .icons import tool_icon
 from . import recovery
@@ -66,6 +66,10 @@ QDockWidget::title { padding: 5px 6px; background: #e8ebf0; }
 QTabBar::tab { padding: 6px 8px; }
 QTreeWidget::item { padding: 3px 0; }
 """
+
+
+def _same_file(a, b) -> bool:
+    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
 
 
 def custom_text(v) -> str:
@@ -916,7 +920,8 @@ class Main(DocumentOps, W.QMainWindow):
         self._sync_central()
         self.refresh_all()
         QtCore.QTimer.singleShot(0, cv.fit_width)  # start at page width, like Revu
-        self.statusBar().showMessage(f"{title}: {d.page_count} page(s). Pick a tool from the toolbar.")
+        self.statusBar().showMessage(f"{title}: {d.page_count} page(s). "
+                                     + (SIGNED_WARNING if d.signed else "Pick a tool from the toolbar."))
 
     def new_from_images(self):
         ps, _ = W.QFileDialog.getOpenFileNames(self, "Images", "", "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff)")
@@ -964,9 +969,27 @@ class Main(DocumentOps, W.QMainWindow):
             if u.toLocalFile().lower().endswith(".pdf"):
                 self.open(u.toLocalFile())
 
+    def _overwrite_signed(self) -> bool | None:
+        """Ask before a save rewrites a signed PDF. True: save in place. False: Save As. None: cancel."""
+        box = W.QMessageBox(self)
+        box.setWindowTitle("Digitally signed PDF")
+        box.setIcon(W.QMessageBox.Warning)
+        box.setText(SIGNED_WARNING + " Save a copy under a new name instead?")
+        save_as = box.addButton("Save As…", W.QMessageBox.AcceptRole)
+        anyway = box.addButton("Save anyway", W.QMessageBox.DestructiveRole)
+        box.addButton("Cancel", W.QMessageBox.RejectRole)
+        box.setDefaultButton(save_as)
+        box.exec_()
+        return {save_as: False, anyway: True}.get(box.clickedButton())
+
     def _save(self, d: Document) -> bool:
+        in_place = bool(d.path)
+        if in_place and d.signed:
+            in_place = self._overwrite_signed()
+            if in_place is None:
+                return False
         try:
-            if d.path:
+            if in_place:
                 d.save()
             else:
                 p, _ = W.QFileDialog.getSaveFileName(self, "Save", getattr(d, "suggested_path", None) or "", "PDF (*.pdf)")
@@ -993,6 +1016,8 @@ class Main(DocumentOps, W.QMainWindow):
     def save_as(self):
         if self._need_doc():
             p, _ = W.QFileDialog.getSaveFileName(self, "Save As", "", "PDF (*.pdf)")
+            if p and self.doc.path and _same_file(p, self.doc.path):
+                return self.save()  # an in-place save: it asks first when that would break signatures
             if p:
                 self.cv.select(None)
                 if self._run(self.doc.save, p, msg=f"Saved {p}"):

@@ -7,6 +7,7 @@ import pytest
 from openrevu.core import STATUSES, Document, Scale, angle_deg, format_value
 from openrevu.pages import compare_pdfs
 from openrevu.toolchest import ToolChest
+from tests.conftest import selfsigned
 
 
 def flat(pts):
@@ -793,29 +794,10 @@ def test_ocr_makes_scans_searchable(tmp_path):
     assert d.ocr() == 0  # already has text: skipped
 
 
-def _selfsigned(tmp_path, cn="Test Signer"):
-    import datetime
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.hazmat.primitives.serialization import pkcs12
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, cn)])
-    now = datetime.datetime.now(datetime.timezone.utc)
-    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
-            .serial_number(7).not_valid_before(now - datetime.timedelta(days=1))
-            .not_valid_after(now + datetime.timedelta(days=30)).sign(key, hashes.SHA256()))
-    p12 = tmp_path / f"{cn}.p12"
-    p12.write_bytes(pkcs12.serialize_key_and_certificates(b"id", key, cert, None, serialization.BestAvailableEncryption(b"pw")))
-    pem = tmp_path / f"{cn}.pem"
-    pem.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-    return str(p12), str(pem)
-
-
 def test_signature_trust_validation(pdf, tmp_path):
     from openrevu.sign import sign_pdf, verify_signatures
-    p12, pem = _selfsigned(tmp_path)
-    _, other_pem = _selfsigned(tmp_path, "Someone Else")
+    p12, pem = selfsigned(tmp_path)
+    _, other_pem = selfsigned(tmp_path, "Someone Else")
     out = str(tmp_path / "s.pdf"); sign_pdf(pdf, out, p12, "pw")
     untrusted = verify_signatures(out)[0]
     assert untrusted["intact"] and untrusted["valid"] and not untrusted["trusted"] and untrusted["whole_file"]
@@ -858,7 +840,7 @@ def test_failed_operations_do_not_pollute_undo(pdf):
 # ---------- second-review regressions ----------
 def test_signature_verdict_catches_edits_after_signing(pdf, tmp_path):
     from openrevu.sign import sign_pdf, verify_signatures
-    p12, pem = _selfsigned(tmp_path)
+    p12, pem = selfsigned(tmp_path)
     out = str(tmp_path / "s.pdf"); sign_pdf(pdf, out, p12, "pw")
     assert verify_signatures(out, [pem])[0]["verdict_ok"]
     assert not verify_signatures(out)[0]["verdict_ok"]            # untrusted
@@ -1154,3 +1136,12 @@ def test_extract_and_split_keep_scales_viewports_columns_and_style(pdf, tmp_path
     assert [len(x.viewports) for x in firsts] == [1, 0, 1] and firsts[0].viewports[0][2].unit == "cm"
     # the source document was not changed by writing the extract
     assert d.scale_for(2).unit == "m" and len(d.viewports) == 2 and len(d._undo) >= 1
+
+
+def test_cli_warns_when_a_signed_pdf_is_rewritten(signed_pdf, pdf, tmp_path, capsys):
+    from openrevu.cli import main
+    assert main(["flatten", signed_pdf, str(tmp_path / "flat.pdf")]) == 0
+    assert "digitally signed" in capsys.readouterr().err
+    assert main(["csv", signed_pdf, str(tmp_path / "m.csv")]) == 0      # no PDF written: no warning
+    assert main(["flatten", pdf, str(tmp_path / "flat2.pdf")]) == 0
+    assert "digitally signed" not in capsys.readouterr().err

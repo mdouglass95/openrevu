@@ -12,6 +12,7 @@ from PyQt5 import QtWidgets
 
 from openrevu.gui import Main
 from tests.test_sheets import SET_V1, make_set
+from tests.conftest import choose
 
 
 @pytest.fixture(scope="module")
@@ -26,17 +27,6 @@ def pdf(tmp_path):
 
 def files(d):
     return sorted(os.listdir(d)) if os.path.isdir(d) else []
-
-
-def choose(monkeypatch, label):
-    """Make the recovery question answer with the button called `label`."""
-    def exec_(self):
-        for b in self.buttons():
-            if b.text() == label:
-                self._clicked = b
-        return 0
-    monkeypatch.setattr(QtWidgets.QMessageBox, "exec_", exec_)
-    monkeypatch.setattr(QtWidgets.QMessageBox, "clickedButton", lambda self: getattr(self, "_clicked", None))
 
 
 def crash(w):

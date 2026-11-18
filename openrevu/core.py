@@ -8,6 +8,7 @@ import getpass
 import json
 import math
 import os
+import re
 from dataclasses import dataclass
 
 import pymupdf as fitz  # PyMuPDF
@@ -17,6 +18,7 @@ from .pages import PageOps
 from .sheets import SheetOps
 
 TAG = "OpenRevu"
+SIGNED_WARNING = "This PDF is digitally signed. Saving will invalidate the signatures."
 UNITS = {"mm": 1 / 25.4, "cm": 1 / 2.54, "m": 1 / 0.0254, "in": 1.0, "ft": 1 / 12.0, "yd": 1 / 36.0}
 STATUSES = ["", "Accepted", "Rejected", "Cancelled", "Completed", "Reviewed"]
 MEASURE_KEY, STATUS_KEY, PARENT_KEY = "OR_Measure", "OR_Status", "OR_Parent"
@@ -496,6 +498,8 @@ class Document(SheetOps, PageOps):
             raise PermissionError("password required or incorrect")
         self.path = path
         self._password = password if encrypted else None  # re-applied on save so protection is never silently dropped
+        # Saving rewrites the whole file, which breaks every digital signature, so callers warn first.
+        self.signed = self._has_signatures()
         self.author = getpass.getuser()
         self._depth = 0
         self.generation = 0
@@ -515,6 +519,29 @@ class Document(SheetOps, PageOps):
         """Open from memory so the file is never locked (Windows refuses to replace/overwrite open files)."""
         with open(path, "rb") as f:
             return fitz.open("pdf", f.read())
+
+    def _has_signatures(self) -> bool:
+        """True if any signature field holds a signature (an empty field to be signed later does not count).
+        Walks the /AcroForm/Fields tree, so no page is loaded."""
+        doc = self.doc
+
+        def refs(val):  # xrefs in an array, which may itself be an indirect object
+            if val and re.fullmatch(r"\d+ \d+ R", val):
+                val = doc.xref_object(int(val.split()[0]), compressed=True)
+            return [int(x) for x in re.findall(r"(\d+) \d+ R", val or "")]
+
+        todo = [(x, None) for x in refs(_xget(doc, doc.pdf_catalog(), "AcroForm/Fields"))]
+        seen = set()
+        while todo:
+            xref, inherited_ft = todo.pop()
+            if xref in seen:
+                continue
+            seen.add(xref)
+            ft = _xget(doc, xref, "FT") or inherited_ft  # a field may take its type from its parent
+            if ft == "/Sig" and _xget(doc, xref, "V"):
+                return True
+            todo += [(k, ft) for k in refs(_xget(doc, xref, "Kids"))]
+        return False
 
     def _page(self, pno: int) -> fitz.Page:
         """Page object kept alive (annotations returned by add_* are only valid while their page is)."""
@@ -1146,6 +1173,7 @@ class Document(SheetOps, PageOps):
             self.doc.save(path, **kw)
             self.path = path
         self.modified = False
+        self.signed = False  # the rewrite has already broken the signatures
 
 
 def _today() -> str:

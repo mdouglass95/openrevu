@@ -8,6 +8,7 @@ pytest.importorskip("PyQt5")
 from PyQt5 import QtCore, QtGui, QtTest, QtWidgets
 
 from openrevu.gui import Main, parse_pages
+from tests.conftest import choose
 
 
 @pytest.fixture(scope="module")
@@ -673,3 +674,63 @@ def test_a_narrow_drag_places_stamps_and_signatures_like_a_click(win):
     w.set_tool("Stamp"); drag(w, 0, (100, 150), (100, 320))
     w.set_tool("Signature"); drag(w, 0, (300, 150), (300, 320))
     assert sorted(m.subject for m in w.doc.markups()) == ["Signature", "Stamp"]
+
+
+# ---------- digitally signed PDFs ----------
+def open_signed_and_edit(w, path):
+    w.open(path)
+    w.set_tool("Rectangle")
+    drag(w, 0, (100, 150), (200, 220))
+    assert w.doc.modified
+
+
+def test_saving_a_signed_pdf_in_place_asks_and_defaults_to_save_as(win, signed_pdf, tmp_path, monkeypatch):
+    w = win
+    original = open(signed_pdf, "rb").read()
+    open_signed_and_edit(w, signed_pdf)
+    shown = choose(monkeypatch, "Save As…")
+    copy = str(tmp_path / "markup copy.pdf")
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (copy, "")))
+    w.save()
+    assert "digitally signed" in shown["text"] and shown["default"] == "Save As…"
+    assert open(signed_pdf, "rb").read() == original
+    assert w.doc.path == copy and not w.doc.modified
+    assert w.tabs.tabText(w.tabs.currentIndex()).endswith("markup copy.pdf")
+
+
+def test_save_anyway_overwrites_a_signed_pdf(win, signed_pdf, monkeypatch):
+    w = win
+    original = open(signed_pdf, "rb").read()
+    open_signed_and_edit(w, signed_pdf)
+    choose(monkeypatch, "Save anyway")
+    w.save()
+    assert open(signed_pdf, "rb").read() != original
+    assert w.doc.path == signed_pdf and not w.doc.modified
+
+
+def test_cancelling_the_signed_pdf_question_saves_nothing(win, signed_pdf, monkeypatch):
+    w = win
+    original = open(signed_pdf, "rb").read()
+    open_signed_and_edit(w, signed_pdf)
+    choose(monkeypatch, "Cancel")
+    w.save()
+    assert open(signed_pdf, "rb").read() == original
+    assert w.doc.modified
+
+
+def test_opening_a_signed_pdf_says_saving_will_break_the_signatures(win, signed_pdf, app):
+    w = win
+    w.open(signed_pdf)
+    app.processEvents()
+    assert "digitally signed" in w.statusBar().currentMessage()
+
+
+def test_save_as_onto_the_signed_file_itself_asks_too(win, signed_pdf, monkeypatch):
+    w = win
+    original = open(signed_pdf, "rb").read()
+    open_signed_and_edit(w, signed_pdf)
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (signed_pdf, "")))
+    shown = choose(monkeypatch, "Cancel")
+    w.save_as()
+    assert "digitally signed" in shown["text"]
+    assert open(signed_pdf, "rb").read() == original

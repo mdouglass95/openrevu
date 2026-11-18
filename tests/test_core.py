@@ -145,3 +145,18 @@ def test_malformed_measure_is_listed_as_non_measurement(pdf, raw):
     assert m.measurement() is None
     assert doc.takeoff() == {}
     assert doc.takeoff_by_subject() == {}
+
+
+def test_a_digitally_signed_pdf_opens_as_signed(signed_pdf, pdf):
+    assert Document(signed_pdf).signed
+    assert not Document(pdf).signed
+
+
+def test_a_saved_copy_of_a_signed_pdf_is_no_longer_signed(signed_pdf, tmp_path):
+    # A save rewrites the file and breaks the signatures, so a later save has nothing left to protect.
+    d = Document(signed_pdf)
+    d.save(str(tmp_path / "copy.pdf"))
+    assert not d.signed
+    d = Document(signed_pdf)
+    d.save()
+    assert not d.signed
