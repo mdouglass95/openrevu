@@ -8,6 +8,7 @@ import getpass
 import json
 import math
 import os
+import secrets
 from dataclasses import dataclass
 
 import pymupdf as fitz  # PyMuPDF
@@ -492,10 +493,19 @@ class Document(SheetOps, PageOps):
     def __init__(self, path: str | None = None, password: str | None = None):
         self.doc = self._open(path) if path else fitz.open()
         encrypted = bool(self.doc.needs_pass)
-        if encrypted and not (password and self.doc.authenticate(password)):
+        p = self.doc.xref_get_key(-1, "Encrypt/P")
+        # The file's own permission bits, re-applied on save; None if the file is not encrypted.
+        self._permissions = int(p[1]) if p[0] == "int" else None
+        auth = self.doc.authenticate(password) if password and self._permissions is not None else 0
+        if encrypted and not auth:
             raise PermissionError("password required or incorrect")
         self.path = path
         self._password = password if encrypted else None  # re-applied on save so protection is never silently dropped
+        is_owner = bool(auth & 4)                # authenticate() sets bit 4 for the owner password
+        # What this user may do: everything for an unencrypted file or the owner, else what the file allows.
+        self._allowed = -1 if self._permissions is None or is_owner else self._permissions
+        self._owner_pw = password if is_owner else secrets.token_urlsafe(24)   # used only if the file is encrypted
+        self.save_as_required = self.restricted   # for UIs: do not overwrite a restricted file as issued
         self.author = getpass.getuser()
         self._depth = 0
         self.generation = 0
@@ -586,20 +596,25 @@ class Document(SheetOps, PageOps):
         self._store_scales()
         return self._dump()
 
+    @property
+    def restricted(self) -> bool:
+        """True if the PDF forbids markups or changes and was not opened with its owner password."""
+        need = fitz.PDF_PERM_ANNOTATE | fitz.PDF_PERM_MODIFY
+        return self._allowed & need != need
+
     def _encryption_kwargs(self) -> dict:
-        """Arguments that protect a file written from this document, if the document was opened with a password.
+        """Arguments that protect a file written from this document the way the opened file was protected: the same
+        user password and permissions, and the owner password if the user gave it (else a random one).
         Every file that OpenRevu derives from a protected document (copies, extracts, reports) uses them."""
-        if not self._password:
+        if self._permissions is None:
             return {}
-        return dict(encryption=fitz.PDF_ENCRYPT_AES_256, user_pw=self._password, owner_pw=self._password + "-owner",
-                    permissions=-1)
+        return dict(encryption=fitz.PDF_ENCRYPT_AES_256, user_pw=self._password or "", owner_pw=self._owner_pw,
+                    permissions=self._permissions)
 
     def _dump(self) -> bytes:
-        """Serialize for the undo history; protected documents never leave plaintext copies in memory."""
-        if self._password:
-            return self.doc.tobytes(encryption=fitz.PDF_ENCRYPT_AES_256, user_pw=self._password,
-                                    owner_pw=self._password + "-owner", permissions=-1)
-        return self.doc.tobytes()
+        """Serialize for the undo history and autosave. Protected documents never leave plaintext copies in memory,
+        and a snapshot of an encrypted file stays encrypted so a recovered copy keeps its permissions."""
+        return self.doc.tobytes(**self._encryption_kwargs())
 
     # --- scales (default + per page), persisted in PDF keywords ---
     def _load_scales(self):
@@ -1145,6 +1160,7 @@ class Document(SheetOps, PageOps):
         else:
             self.doc.save(path, **kw)
             self.path = path
+            self.save_as_required = False   # the new file is the user's own copy
         self.modified = False
 
 

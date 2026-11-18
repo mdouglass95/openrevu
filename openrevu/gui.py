@@ -850,9 +850,17 @@ class Main(DocumentOps, W.QMainWindow):
         for lbl in (self.lbl_scale, self.lbl_page, self.lbl_zoom):
             lbl.setStyleSheet("padding: 0 10px;")
             sb.addPermanentWidget(lbl)
+        self.lbl_restricted = W.QLabel("This PDF restricts editing")
+        self.lbl_restricted.setStyleSheet("padding: 0 10px; color: white; background: #b35900;")
+        self.lbl_restricted.setToolTip("The author of this PDF does not allow markups or changes. You can still add them, "
+                                       "but Save asks for a new file name, so the original stays as issued. "
+                                       "The copy keeps the same restrictions.")
+        self.lbl_restricted.hide()
+        sb.addPermanentWidget(self.lbl_restricted)
 
     def _update_status_widgets(self):
         cv = self.cv
+        self.lbl_restricted.setVisible(bool(cv) and cv.doc.restricted)
         if not cv:
             for lbl in (self.lbl_scale, self.lbl_page, self.lbl_zoom):
                 lbl.setText("")
@@ -966,10 +974,11 @@ class Main(DocumentOps, W.QMainWindow):
 
     def _save(self, d: Document) -> bool:
         try:
-            if d.path:
+            if d.path and not d.save_as_required:
                 d.save()
             else:
-                p, _ = W.QFileDialog.getSaveFileName(self, "Save", getattr(d, "suggested_path", None) or "", "PDF (*.pdf)")
+                title = "Save a copy (this PDF restricts editing)" if d.restricted else "Save"
+                p, _ = W.QFileDialog.getSaveFileName(self, title, getattr(d, "suggested_path", None) or "", "PDF (*.pdf)")
                 if not p:
                     return False
                 d.save(p)
