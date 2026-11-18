@@ -266,6 +266,19 @@ def test_properties_toolbar_edits_selection_or_defaults(win):
     assert len(filled) == 1 and tuple(filled[0].annot.colors["fill"]) == (1.0, 1.0, 0.0)
 
 
+def test_ten_clicks_on_the_width_spin_box_are_one_undo_step(win):
+    w = win
+    w.set_tool("Rectangle"); drag(w, 0, (100, 150), (200, 220))
+    m = w.doc.markups()[0]; w.cv.select(m)
+    before, steps = m.annot.border["width"], w.doc.undo_steps
+    for _ in range(10):
+        w.w_width.stepUp()
+    assert w.doc.markups()[0].annot.border["width"] == before + 10 * w.w_width.singleStep()
+    assert w.doc.undo_steps == steps + 1
+    w.undo()
+    assert w.doc.markups()[0].annot.border["width"] == before and w.doc.undo_steps == steps
+
+
 def test_context_menu_actions(win, monkeypatch):
     w = win
     w.set_tool("Rectangle"); drag(w, 0, (100, 150), (200, 220))
@@ -637,15 +650,15 @@ def test_custom_numbers_round_trip_and_losing_focus_changes_nothing(win):
     assert w.doc.markups()[0].custom()["Qty"] == 1234567.0 and ed.text() == "1234567"
     w._load_props()
     assert ed.text() == "1234567"                                           # not 1.23457e+06
-    steps, modified = len(w.doc._undo), w.doc.modified
+    steps, modified = w.doc.undo_steps, w.doc.modified
     for _ in range(3):
         ed.editingFinished.emit()                                           # focus out with no change
     assert w.doc.markups()[0].custom()["Qty"] == 1234567.0                  # the value is exact
-    assert len(w.doc._undo) == steps and w.doc.modified == modified         # and no undo step was added
+    assert w.doc.undo_steps == steps and w.doc.modified == modified         # and no undo step was added
     row = [w.mk_table.item(0, c).text() for c in range(w.mk_table.columnCount())]
     assert row[-1] == "1234567"
     ed.setText("1234568"); ed.editingFinished.emit()
-    assert w.doc.markups()[0].custom()["Qty"] == 1234568.0 and len(w.doc._undo) == steps + 1
+    assert w.doc.markups()[0].custom()["Qty"] == 1234568.0 and w.doc.undo_steps == steps + 1
 
 
 # ---------- third-review regressions: straight drags ----------

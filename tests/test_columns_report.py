@@ -35,7 +35,7 @@ def test_column_definition_errors(pdf):
     for args in (("",), ("  ",), ("Cost",), ("Subject",), ("X", "date"), ("Y", "choice"), ("Z", "choice", [" ", ""])):
         with pytest.raises(ValueError):
             d.add_column(*args)
-    assert [c["name"] for c in d.columns] == ["Cost"] and len(d._undo) == 1      # failures left no undo steps
+    assert [c["name"] for c in d.columns] == ["Cost"] and d.undo_steps == 1      # failures left no undo steps
     with pytest.raises(KeyError):
         d.remove_column("Nope")
 
@@ -162,7 +162,7 @@ def test_bold_headings_are_wrapped_with_the_bold_font(pdf, tmp_path):
     d = Document(pdf)
     d.add_rect(0, fitz.Rect(10, 10, 60, 60)); m = d.markups()[0]
     m.set_subject("W" * 12 + " " + "MWMWMWMW " * 8)
-    d.doc.xref_set_key(m.xref, "T", "(" + "Reviewer " * 6 + ")")
+    with d._operation(): d.doc.xref_set_key(m.xref, "T", "(" + "Reviewer " * 6 + ")")
     out = str(tmp_path / "b.pdf"); d.export_markup_summary(out, include_images=False)
     for b in fitz.open(out)[0].get_text("blocks"):
         assert b[2] <= 612 - 40 + 1                                       # the wide bold text stays inside the right margin

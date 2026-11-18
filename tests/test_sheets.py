@@ -52,7 +52,7 @@ def test_set_sheet_rejects_duplicate_numbers_and_bad_page(v1):
         d.set_sheet(9, number="X-1")
     d.set_sheet(1, number="A-102R")
     assert d.sheet_info(1)["number"] == "A-102R"
-    assert len(d._undo) == 1                              # the failed calls left no undo steps
+    assert d.undo_steps == 1                              # the failed calls left no undo steps
 
 
 def test_revisions_validation_order_and_removal(v1):
@@ -209,10 +209,10 @@ def test_slip_sheet_reports_size_change_and_bad_input(tmp_path):
     with pytest.raises(ValueError, match="no sheet numbers"):
         d.slip_sheet(str(tmp_path / "nn.pdf"))
     d.slip_sheet(make_set(tmp_path / "again.pdf", [("A-101", "x", "first try")]), revision="B")
-    n_undo, text = len(d._undo), d.page_text(0)
+    n_undo, text = d.undo_steps, d.page_text(0)
     with pytest.raises(ValueError, match="already exists on sheet A-101"):
         d.slip_sheet(make_set(tmp_path / "again2.pdf", [("A-101", "x", "second try")]), revision="B")
-    assert len(d._undo) == n_undo and d.page_text(0) == text and d.page_count == 3       # nothing changed
+    assert d.undo_steps == n_undo and d.page_text(0) == text and d.page_count == 3       # nothing changed
     dup = Document(make_set(tmp_path / "dup.pdf", [("A-1", "a", ""), ("A-1", "b", "")]))
     with pytest.raises(ValueError, match="is on pages 1 and 2"):
         dup.slip_sheet(new)
@@ -222,13 +222,13 @@ def test_a_failure_halfway_restores_the_document(v1, tmp_path, monkeypatch):
     from openrevu.pages import PageOps
     d = Document(v1)
     d.add_rect(0, fitz.Rect(10, 10, 50, 50))
-    before = (d.page_count, d.page_text(0), len(d.markups()), len(d._undo))
+    before = (d.page_count, d.page_text(0), len(d.markups()), d.undo_steps)
     other = make_set(tmp_path / "o.pdf", [("B-1", "x", "y"), ("B-2", "x", "y")])
     monkeypatch.setattr(PageOps, "_remap_scales", lambda self, m: (_ for _ in ()).throw(RuntimeError("boom after inserting")))
     with pytest.raises(RuntimeError, match="boom"):
         d.insert_pdf(other)                       # pages are inserted, then the step after them fails
     monkeypatch.undo()
-    assert (d.page_count, d.page_text(0), len(d.markups()), len(d._undo)) == before
+    assert (d.page_count, d.page_text(0), len(d.markups()), d.undo_steps) == before
     with pytest.raises(IndexError):
         d.insert_pdf(other, pages=[0, 99])        # checked before the first page is inserted
     assert d.page_count == 3
@@ -320,11 +320,11 @@ def test_detect_sheets_changes_nothing_if_it_fails_halfway(v1, monkeypatch):
             raise RuntimeError("page 3 cannot be read")
         return real(self, pno, pattern, corner)
     monkeypatch.setattr(Document, "_detect", flaky)
-    steps = len(d._undo)
+    steps = d.undo_steps
     with pytest.raises(RuntimeError, match="page 3"):
         d.detect_sheets()
     assert [d.sheet_record(i) for i in range(3)] == [{}, {}, {}]      # pages 1 and 2 were not written
-    assert len(d._undo) == steps and not d.modified
+    assert d.undo_steps == steps and not d.modified
 
 
 def test_a_failure_after_an_in_place_change_restores_the_document(v1):
@@ -339,9 +339,9 @@ def test_a_failure_after_an_in_place_change_restores_the_document(v1):
             raise RuntimeError("fails after two in-place changes")
 
     d = D(v1)
-    steps, modified = len(d._undo), d.modified
+    steps, modified = d.undo_steps, d.modified
     with pytest.raises(RuntimeError, match="fails after"):
         d.half_done()
     assert d.doc.xref_get_key(d.doc.page_xref(0), "OR_Test")[0] == "null"       # the stray key is gone
-    assert d.scale.unit != "m" and (len(d._undo), d.modified) == (steps, modified)
+    assert d.scale.unit != "m" and (d.undo_steps, d.modified) == (steps, modified)
     d.add_rect(0, fitz.Rect(1, 1, 9, 9)); assert len(d.markups()) == 1            # the document is fully usable

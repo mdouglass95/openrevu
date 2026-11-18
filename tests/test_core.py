@@ -187,7 +187,7 @@ def test_malformed_measure_is_listed_as_non_measurement(pdf, raw):
     doc = Document(pdf)
     doc.add_length(0, [(72, 72), (144, 72)], label=False)
     (m,) = doc.markups()
-    doc.doc.xref_set_key(m.xref, "OR_Measure", raw)
+    with doc._operation(): doc.doc.xref_set_key(m.xref, "OR_Measure", raw)
     (m,) = doc.markups()
     assert m.measurement() is None
     assert doc.takeoff() == {}

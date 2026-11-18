@@ -10,10 +10,12 @@ import math
 import os
 import re
 import secrets
+import time
 from dataclasses import dataclass
 
 import pymupdf as fitz  # PyMuPDF
 
+from . import _journal
 from ._util import mutates as _mutates
 from .pages import PageOps
 from .sheets import SheetOps
@@ -260,12 +262,12 @@ class Markup:
                 raise ValueError(f"{value!r} is not one of {col['choices']}")
         else:
             value = str(value)
-        self._edit()
         vals = {k: v for k, v in self.custom().items() if k != name}
         if value is not None:
             vals[name] = value
         enc = base64.b64encode(json.dumps(vals, ensure_ascii=False).encode("utf-8")).decode("ascii")
-        self.d.doc.xref_set_key(self.xref, CUSTOM_KEY, f"({enc})" if vals else "null")
+        with self._edit():
+            self.d.doc.xref_set_key(self.xref, CUSTOM_KEY, f"({enc})" if vals else "null")
 
     def replies(self):
         out = []
@@ -274,48 +276,47 @@ class Markup:
                 out.append((a.info.get("title", ""), a.info.get("content", "")))
         return out
 
-    # --- editing (each checkpoints for undo) ---
-    def _edit(self):
-        self.d.checkpoint()
+    # --- editing (each is one undo step) ---
+    def _edit(self, merge=None):
+        return self.d._operation("edit markup", merge)
 
     def set_colors(self, stroke=None, fill=None):
-        self._edit()
         kw = {}
         if stroke is not None:
             kw["stroke"] = stroke
         if fill is not None:
             kw["fill"] = fill
-        self.annot.set_colors(**kw)
-        self.annot.update()
+        with self._edit():
+            self.annot.set_colors(**kw)
+            self.annot.update()
 
     def set_width(self, w):
-        self._edit()
-        self.annot.set_border(width=w)
-        self.annot.update()
+        """Consecutive width changes of one markup are one undo step (a spin box sends one per click)."""
+        with self._edit(merge=("width", self.xref)):
+            self.annot.set_border(width=w)
+            self.annot.update()
 
     def set_opacity(self, o):
-        self._edit()
-        self.annot.set_opacity(o)
-        self.annot.update()
+        """Consecutive opacity changes of one markup are one undo step."""
+        with self._edit(merge=("opacity", self.xref)):
+            self.annot.set_opacity(o)
+            self.annot.update()
 
     def set_subject(self, s):
-        self._edit()
-        self.annot.set_info(subject=s)
-        self.annot.update()
+        with self._edit():
+            self.annot.set_info(subject=s)
+            self.annot.update()
 
     def set_comment(self, c):
-        self._edit()
-        self.annot.set_info(content=c)
-        self.annot.update()
+        with self._edit():
+            self.annot.set_info(content=c)
+            self.annot.update()
 
     def set_status(self, s):
         if s not in STATUSES:
             raise ValueError(f"unknown status {s!r}")
-        self._edit()
-        if s:
-            self.d.doc.xref_set_key(self.xref, STATUS_KEY, f"({s})")
-        else:
-            self.d.doc.xref_set_key(self.xref, STATUS_KEY, "null")
+        with self._edit():
+            self.d.doc.xref_set_key(self.xref, STATUS_KEY, f"({s})" if s else "null")
 
     def _children(self):
         return [a for a in self._page.annots() or []
@@ -340,8 +341,8 @@ class Markup:
         """Move by (dx, dy) in visual coordinates."""
         self._check_transformable()
         new = self.rect + (dx, dy, dx, dy)
-        self._edit()
-        self._apply(self.d._ru(self.page_no, new))
+        with self._edit():
+            self._apply(self.d._ru(self.page_no, new))
 
     def resize(self, new_rect):
         """Resize to new_rect (visual coordinates). Measurements are re-measured."""
@@ -353,10 +354,10 @@ class Markup:
         old = self.annot.rect
         if old.width == 0 or old.height == 0:
             raise ValueError("degenerate markup")
-        self._edit()
-        self._apply(self.d._ru(self.page_no, new_rect))
-        if m:
-            self._remeasure(m[0])
+        with self._edit():
+            self._apply(self.d._ru(self.page_no, new_rect))
+            if m:
+                self._remeasure(m[0])
 
     def _children_markups(self):
         return [Markup(c, self.page_no, self._page, self.d) for c in self._children()]
@@ -525,8 +526,8 @@ class Document(SheetOps, PageOps):
         self.viewports: list = []
         self.unit_style, self.fraction = "decimal", 16
         self.columns: list = []   # custom Markups List columns: {"name", "type", "choices"}
-        self._undo: list[bytes] = []
-        self._redo: list[bytes] = []
+        self._joined: set[int] = set()   # journal steps that undo together with the step before them
+        self._merge = None               # (key, journal position, time) of the last step that a next one may join
         self.modified = False
         self.default_scale, self.page_scales = self._load_scales()
         # A full rewrite (all save() can do) invalidates digital signatures, so callers warn before saving over the
@@ -593,39 +594,92 @@ class Document(SheetOps, PageOps):
         return fitz.Rect(r) * self._page(pno).rotation_matrix
 
     # --- undo / redo ---
-    MAX_UNDO = 30
+    MERGE_SECONDS = 2.0      # merged steps (spin box clicks): how long after one change the next may still join it
+    # MuPDF's journal records the old version of every object an operation changes, so an undo step costs memory in
+    # proportion to the change, not to the file. The journal starts with the first operation; after that, every change
+    # to self.doc must happen inside _operation, because MuPDF refuses changes outside one. Copy pages out of the
+    # document from _copy(), not from self.doc (see _journal.py).
 
-    def checkpoint(self):
+    @contextlib.contextmanager
+    def _operation(self, name="edit", merge=None):
+        """One undo step. Nested operations are part of the outer one. If the body raises, the document goes back to
+        exactly how it was, and markups fetched before are stale. A step with a `merge` key joins the step before it
+        when that step had the same key, came less than MERGE_SECONDS earlier, and nothing happened in between (one
+        undo then undoes both)."""
+        if self._depth:
+            yield
+            return
+        before, modified = self.doc.journal_position(), self.modified
         self.revision += 1
-        self._store_scales()
-        self._undo.append(self._dump())
-        del self._undo[:-self.MAX_UNDO]
-        self._redo = []
+        self._depth = 1
+        try:
+            with _journal.operation(self.doc, name):
+                yield
+                self._store_scales()
+        except BaseException:
+            self._journal_moved()
+            self.modified = modified
+            raise
+        finally:
+            self._depth = 0
         self.modified = True
+        after = self.doc.journal_position()
+        if after != before:                                  # the operation changed something: it is a new step
+            self._joined = {s for s in self._joined if s <= before[0]}     # MuPDF dropped the steps after `before`
+            now = time.monotonic()
+            if merge is not None and self._merge and self._merge[:2] == (merge, before) \
+                    and now - self._merge[2] < self.MERGE_SECONDS:
+                self._joined.add(after[0])
+            self._merge = (merge, after, now) if merge is not None else None
 
-    def _reopen(self, data: bytes):
+    def _journal_moved(self):
+        """After the journal undid or redid changes: page objects, PyMuPDF's metadata cache and the settings read
+        from the metadata are out of date."""
         self._invalidate_pages()
-        self.doc.close()
-        self.doc = fitz.open("pdf", data)
-        if self.doc.needs_pass:
-            self.doc.authenticate(self._password)
+        self.doc.init_doc()
         self.default_scale, self.page_scales = self._load_scales()
+        self._merge = None
+
+    @property
+    def undo_steps(self) -> int:
+        """How many times undo() can go back."""
+        pos = self.doc.journal_position()[0]
+        return pos - sum(1 for s in self._joined if s <= pos)
+
+    @property
+    def redo_steps(self) -> int:
+        """How many times redo() can go forward."""
+        pos, total = self.doc.journal_position()
+        return total - pos - sum(1 for s in self._joined if s > pos)
 
     def undo(self) -> bool:
-        if not self._undo:
+        pos = self.doc.journal_position()[0]
+        if not pos:
             return False
-        self._redo.append(self._snapshot())
-        self._reopen(self._undo.pop())
+        self.doc.journal_undo()
+        while pos in self._joined:          # this step was joined to the one before it
+            self.doc.journal_undo()
+            pos -= 1
+        self._journal_moved()
         self.modified = True
         return True
 
     def redo(self) -> bool:
-        if not self._redo:
+        pos, total = self.doc.journal_position()
+        if pos == total:
             return False
-        self._undo.append(self._snapshot())
-        self._reopen(self._redo.pop())
+        self.doc.journal_redo()
+        while pos + 2 in self._joined:      # the next step is joined to the one just redone
+            self.doc.journal_redo()
+            pos += 1
+        self._journal_moved()
         self.modified = True
         return True
+
+    def _copy(self) -> fitz.Document:
+        """A copy of the document to copy pages from (see _journal.py, item 4). Close it after use, for example with
+        `with self._copy() as copy:`."""
+        return _journal.copy(self.doc)
 
     def _snapshot(self) -> bytes:
         self._store_scales()
@@ -655,6 +709,7 @@ class Document(SheetOps, PageOps):
     def _load_scales(self):
         self.viewports = []
         self.columns = []
+        self.unit_style, self.fraction = "decimal", 16      # undo can go back to before the settings were first stored
         kw = (self.doc.metadata or {}).get("keywords") or ""
         for part in kw.split(";"):
             if part.startswith(TAG + "-scales="):
@@ -689,7 +744,14 @@ class Document(SheetOps, PageOps):
         target.set_metadata(md)
 
     def _store_scales(self):
-        self._write_settings(self.doc)
+        """Write the settings into the document's keywords. Every operation ends with this, so undo restores them with
+        the rest, and outside an operation they are already stored."""
+        if not self._depth:
+            return
+        keywords = (self.doc.metadata or {}).get("keywords") or ""
+        stored = [p for p in keywords.split(";") if p.startswith(TAG + "-scale")]
+        if stored != [f"{TAG}-scales={json.dumps(self._settings_blob())}"]:   # an edit that changes nothing adds no step
+            self._write_settings(self.doc)
 
     @property
     def scale(self) -> Scale:
@@ -773,24 +835,24 @@ class Document(SheetOps, PageOps):
         r = fitz.Rect(rect).normalize()
         if r.is_empty:
             raise ValueError("viewport must have an area")
-        self.checkpoint()
-        self.viewports.append((pno, r, scale))
+        with self._operation("add viewport"):
+            self.viewports.append((pno, r, scale))
 
     def remove_viewport(self, index: int):
-        self.checkpoint()
-        del self.viewports[index]
+        with self._operation("remove viewport"):
+            del self.viewports[index]
 
     def set_scale(self, scale: Scale, page: int | None = None, pages=None, reset_pages: bool = False):
         """Set the default scale, or the scale of one page / a list of pages.
         reset_pages=True also clears every per-page override (apply to all pages)."""
-        self.checkpoint()
-        if reset_pages:
-            self.page_scales = {}
-        if pages is not None or page is not None:
-            for p in ([page] if pages is None else pages):
-                self.page_scales[p] = scale
-        else:
-            self.default_scale = scale
+        with self._operation("set scale"):
+            if reset_pages:
+                self.page_scales = {}
+            if pages is not None or page is not None:
+                for p in ([page] if pages is None else pages):
+                    self.page_scales[p] = scale
+            else:
+                self.default_scale = scale
 
     @property
     def page_count(self) -> int:
@@ -1186,12 +1248,6 @@ class Document(SheetOps, PageOps):
                 with contextlib.suppress(OSError):
                     os.remove(tmp)
                 raise
-            reopened = self._open(path)  # before closing the old one, so a failure leaves the document usable
-            self._invalidate_pages()
-            self.doc.close()
-            self.doc = reopened
-            if self.doc.needs_pass and not self.doc.authenticate(self._password or kw.get("user_pw", "")):
-                raise PermissionError("saved file is encrypted; reopen with its password")
         else:
             self.doc.save(path, **kw)
             self.path = path
