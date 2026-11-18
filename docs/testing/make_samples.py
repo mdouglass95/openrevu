@@ -75,6 +75,16 @@ for i in range(1, 61):
     sheet(big, f"A-{i:03d}", f"Sheet {i}", f"Sheet {i} of 60")
 big.save(f"{OUT}/many_pages.pdf")
 
+# ---- large_sheet.pdf: one 36 x 24 in sheet with a labelled 1 in grid, for deep zoom ----
+ls = fitz.open(); lp = ls.new_page(width=2592, height=1728)
+for x in range(0, 2592, 72):
+    lp.draw_line((x, 0), (x, 1728), width=0.5)
+for y in range(0, 1728, 72):
+    lp.draw_line((0, y), (2592, y), width=0.5)
+    for x in range(0, 2592, 72):
+        lp.insert_text((x + 4, y + 12), f"{x // 72},{y // 72}", fontsize=6)
+ls.save(f"{OUT}/large_sheet.pdf")
+
 # ---- tools.btx: a Bluebeam tool set made to the community description (not a real Revu export) ----
 def item(name, text):
     return (f'<ToolChestItem Version="1"><Name>{name}</Name><Type>Bluebeam.PDF.Annotations.Test</Type>'
