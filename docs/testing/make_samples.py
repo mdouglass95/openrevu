@@ -93,6 +93,30 @@ for i, n in enumerate(("name", "company")):
     fp.add_widget(w)
 f.save(f"{OUT}/form.pdf")
 
+# ---- signed.pdf: plan_v1 with a digital signature (self-signed certificate; needs pyhanko from .[test]) ----
+def make_signed():
+    import datetime
+    import tempfile
+    from pathlib import Path
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.primitives.serialization import pkcs12
+
+    from openrevu.sign import sign_pdf
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, "Test Engineer")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+            .serial_number(1).not_valid_before(now - datetime.timedelta(days=1))
+            .not_valid_after(now + datetime.timedelta(days=3650)).sign(key, hashes.SHA256()))
+    with tempfile.TemporaryDirectory() as tmp:
+        p12 = Path(tmp) / "id.p12"
+        p12.write_bytes(pkcs12.serialize_key_and_certificates(b"id", key, cert, None, serialization.BestAvailableEncryption(b"pw")))
+        sign_pdf(Path(OUT) / "plan_v1.pdf", Path(OUT) / "signed.pdf", str(p12), "pw", reason="Sealed for permit")
+make_signed()
+
 expected = {
     "folder": OUT,
     "drawing_scale": "18 points = 1 foot. The dimension line on every sheet is 360 points = 20 ft long.",

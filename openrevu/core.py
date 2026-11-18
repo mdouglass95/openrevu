@@ -8,6 +8,7 @@ import getpass
 import json
 import math
 import os
+import re
 import secrets
 from dataclasses import dataclass
 
@@ -159,6 +160,15 @@ def format_value(kind: str, val: float, unit: str, style: str = "decimal", denom
 def _xget(doc, xref, key):
     t, v = doc.xref_get_key(xref, key)
     return None if t == "null" else v
+
+
+def _refs(doc, kind, value) -> list[int]:
+    """The xrefs in a PDF array value from xref_get_key, following one indirect reference to the array."""
+    if kind == "xref":
+        value = doc.xref_object(int(value.split()[0]), compressed=True)
+    elif kind != "array":
+        return []
+    return [int(n) for n in re.findall(r"(\d+) \d+ R", value)]
 
 
 class Markup:
@@ -519,6 +529,31 @@ class Document(SheetOps, PageOps):
         self._redo: list[bytes] = []
         self.modified = False
         self.default_scale, self.page_scales = self._load_scales()
+        # A full rewrite (all save() can do) invalidates digital signatures, so callers warn before saving over the
+        # file. Set once at open: the signatures in the file on disk are what a save would break.
+        self.signed = self._has_signatures()
+
+    def _has_signatures(self) -> bool:
+        # SigFlags bit 2 (AppendOnly) is the signer's "saving other than incrementally breaks this" marker. Bit 1 alone
+        # only says a signature field exists, which may still be blank.
+        d = self.doc
+        flags = d.get_sigflags()   # -1: no form at all
+        if flags > 0 and flags & 2:
+            return True
+        # Otherwise walk the AcroForm field tree by xref, without loading pages: a signature field (/FT inherits down
+        # /Kids) with a value is signed.
+        todo = [(x, None) for x in _refs(d, *d.xref_get_key(d.pdf_catalog(), "AcroForm/Fields"))]
+        seen = set()
+        while todo:
+            xref, ft = todo.pop()
+            if xref in seen:   # a malformed tree can loop
+                continue
+            seen.add(xref)
+            ft = _xget(d, xref, "FT") or ft
+            if ft == "/Sig" and _xget(d, xref, "V"):
+                return True
+            todo += [(k, ft) for k in _refs(d, *d.xref_get_key(xref, "Kids"))]
+        return False
 
     @staticmethod
     def _open(path: str) -> fitz.Document:

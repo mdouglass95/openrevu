@@ -37,6 +37,7 @@ SHORTCUTS = {"Select": "V", "Pan": "H", "Rectangle": "R", "Ellipse": "E", "Line"
 PERSISTENT_TOOLS = {"Count"}  # these stay active after each placement
 STAMPS = ["APPROVED", "REVIEWED", "REJECTED", "DRAFT", "FOR CONSTRUCTION", "VOID", "AS BUILT", "CONFIDENTIAL"]
 ZOOMS = [25, 50, 75, 100, 125, 150, 200, 300, 400]
+SIGNED_NOTICE = "This PDF is digitally signed. Saving will invalidate the signatures."
 TOOL_HINTS = {
     "Select": "Click a markup to select it. Drag to move. Drag the corner handle to resize. Right-click for more.",
     "Pan": "Drag to move the page. You can also drag with the middle mouse button.",
@@ -205,6 +206,7 @@ class Main(DocumentOps, W.QMainWindow):
         self._sync_central()
         self.statusBar().showMessage("Open a PDF to begin (Ctrl+O)")
         self._autosave_rev: dict = {}           # document id -> the revision that was last written
+        self._rewritten: set = set()            # ids of signed documents whose file on disk is already our rewrite
         self.autosave_timer = QtCore.QTimer(self)
         self.autosave_timer.timeout.connect(self.autosave_now)
         self.autosave_timer.start(int(float(os.environ.get("OPENREVU_AUTOSAVE_SECONDS", "60")) * 1000))
@@ -924,7 +926,8 @@ class Main(DocumentOps, W.QMainWindow):
         self._sync_central()
         self.refresh_all()
         QtCore.QTimer.singleShot(0, cv.fit_width)  # start at page width, like Revu
-        self.statusBar().showMessage(f"{title}: {d.page_count} page(s). Pick a tool from the toolbar.")
+        self.statusBar().showMessage(f"{title}: {d.page_count} page(s). "
+                                     + (SIGNED_NOTICE if d.signed else "Pick a tool from the toolbar."))
 
     def new_from_images(self):
         ps, _ = W.QFileDialog.getOpenFileNames(self, "Images", "", "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff)")
@@ -947,6 +950,7 @@ class Main(DocumentOps, W.QMainWindow):
                 return
         recovery.remove(cv.doc.recovery_id)       # saved or discarded on purpose: no snapshot is needed
         self._autosave_rev.pop(cv.doc.recovery_id, None)
+        self._rewritten.discard(cv.doc.recovery_id)
         self.tabs.removeTab(i)
         cv.deleteLater()
         self._sync_central()
@@ -972,25 +976,51 @@ class Main(DocumentOps, W.QMainWindow):
             if u.toLocalFile().lower().endswith(".pdf"):
                 self.open(u.toLocalFile())
 
+    def _ask_save_signed(self) -> str:
+        """Saving rewrites the whole file, which breaks its digital signatures. Returns 'save_as', 'anyway' or 'cancel'."""
+        box = W.QMessageBox(self)
+        box.setWindowTitle("Digitally signed PDF")
+        box.setIcon(W.QMessageBox.Warning)
+        box.setText(SIGNED_NOTICE + " Save your changes to a new file to keep the signed original intact.")
+        save_as = box.addButton("Save As…", W.QMessageBox.AcceptRole)
+        anyway = box.addButton("Save anyway", W.QMessageBox.DestructiveRole)
+        box.addButton("Cancel", W.QMessageBox.RejectRole)
+        box.setDefaultButton(save_as)
+        box.exec_()
+        return {save_as: "save_as", anyway: "anyway"}.get(box.clickedButton(), "cancel")
+
     def _save(self, d: Document) -> bool:
+        in_place = bool(d.path) and not d.save_as_required
+        if in_place and d.signed and d.recovery_id not in self._rewritten:
+            choice = self._ask_save_signed()
+            if choice == "cancel":
+                return False
+            in_place = choice == "anyway"
         try:
-            if d.path and not d.save_as_required:
+            if in_place:
                 d.save()
             else:
                 title = "Save a copy (this PDF restricts editing)" if d.restricted else "Save"
-                p, _ = W.QFileDialog.getSaveFileName(self, title, getattr(d, "suggested_path", None) or "", "PDF (*.pdf)")
+                # a signed document's suggested path is its signed original: overwriting it is what the warning is about
+                start = "" if d.signed else getattr(d, "suggested_path", None) or ""
+                p, _ = W.QFileDialog.getSaveFileName(self, title, start, "PDF (*.pdf)")
                 if not p:
                     return False
                 d.save(p)
-                self.tabs.setTabText(self.tabs.currentIndex(), os.path.basename(p))
+                tab = next(i for i in range(self.tabs.count()) if getattr(self.tabs.widget(i), "doc", None) is d)
+                self.tabs.setTabText(tab, os.path.basename(p))   # closing a background tab saves a doc that is not current
                 self.prefs.add_recent(p)
         except ERRORS as e:
             W.QMessageBox.warning(self, "Save failed", str(e))
             return False
-        recovery.remove(d.recovery_id)
-        self._autosave_rev.pop(d.recovery_id, None)
+        self._saved(d)
         self.statusBar().showMessage("Saved")
         return True
+
+    def _saved(self, d: Document):
+        recovery.remove(d.recovery_id)
+        self._autosave_rev.pop(d.recovery_id, None)
+        self._rewritten.add(d.recovery_id)   # the file at d.path is now a full rewrite: no intact signatures left to warn about
 
     def save(self):
         if self._need_doc():
@@ -1005,8 +1035,7 @@ class Main(DocumentOps, W.QMainWindow):
             if p:
                 self.cv.select(None)
                 if self._run(self.doc.save, p, msg=f"Saved {p}"):
-                    recovery.remove(self.doc.recovery_id)
-                    self._autosave_rev.pop(self.doc.recovery_id, None)
+                    self._saved(self.doc)
                     self.tabs.setTabText(self.tabs.currentIndex(), os.path.basename(p))
                     self.prefs.add_recent(p)
 

@@ -503,28 +503,16 @@ def test_summary_csv(pdf, tmp_path):
 
 
 # ---------- digital signatures ----------
-def test_digital_signature(pdf, tmp_path):
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.hazmat.primitives.serialization import pkcs12
-    import datetime
+def test_digital_signature(pdf, tmp_path, selfsigned):
     from openrevu.sign import list_signatures, sign_pdf
 
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, "Test Signer")])
-    now = datetime.datetime.now(datetime.timezone.utc)
-    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
-            .serial_number(1).not_valid_before(now - datetime.timedelta(days=1))
-            .not_valid_after(now + datetime.timedelta(days=30)).sign(key, hashes.SHA256()))
-    p12 = tmp_path / "id.p12"
-    p12.write_bytes(pkcs12.serialize_key_and_certificates(b"id", key, cert, None, serialization.BestAvailableEncryption(b"pw")))
+    p12, _ = selfsigned()
     out = str(tmp_path / "signed.pdf")
-    sign_pdf(pdf, out, str(p12), "pw", reason="approve")
+    sign_pdf(pdf, out, p12, "pw", reason="approve")
     sigs = list_signatures(out)
     assert sigs[0][1] == "Test Signer" and sigs[0][2] and sigs[0][3]
     with pytest.raises(ValueError):
-        sign_pdf(pdf, str(tmp_path / "bad.pdf"), str(p12), "wrong")
+        sign_pdf(pdf, str(tmp_path / "bad.pdf"), p12, "wrong")
     # tampering after signing breaks coverage
     with open(out, "ab") as f:
         f.write(b"\n% appended")
@@ -630,6 +618,19 @@ def test_cli_encrypted_input(pdf, tmp_path):
     assert main(["watermark", enc, str(tmp_path / "o.pdf"), "--text", "X", "--in-password", "pw"]) == 0
     assert main(["encrypt", enc, str(tmp_path / "re.pdf"), "--password", "new", "--in-password", "pw"]) == 0
     assert Document(str(tmp_path / "re.pdf"), "new").page_count == 3
+
+
+def test_cli_warns_when_saving_over_a_signed_input(signed_pdf, tmp_path, capsys, monkeypatch):
+    from pathlib import Path
+
+    from openrevu.cli import main
+    assert main(["watermark", signed_pdf, str(tmp_path / "copy.pdf"), "--text", "X"]) == 0
+    assert capsys.readouterr().err == ""                  # a new file leaves the signed original intact
+
+    monkeypatch.chdir(Path(signed_pdf).parent)            # the same file, spelled differently
+    assert main(["watermark", signed_pdf, Path(signed_pdf).name, "--text", "X"]) == 0
+    err = capsys.readouterr().err
+    assert "warning" in err and "digitally signed" in err
 
 
 @pytest.mark.parametrize("rot", [0, 90, 180, 270])
@@ -793,29 +794,10 @@ def test_ocr_makes_scans_searchable(tmp_path):
     assert d.ocr() == 0  # already has text: skipped
 
 
-def _selfsigned(tmp_path, cn="Test Signer"):
-    import datetime
-    from cryptography import x509
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.hazmat.primitives.serialization import pkcs12
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, cn)])
-    now = datetime.datetime.now(datetime.timezone.utc)
-    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
-            .serial_number(7).not_valid_before(now - datetime.timedelta(days=1))
-            .not_valid_after(now + datetime.timedelta(days=30)).sign(key, hashes.SHA256()))
-    p12 = tmp_path / f"{cn}.p12"
-    p12.write_bytes(pkcs12.serialize_key_and_certificates(b"id", key, cert, None, serialization.BestAvailableEncryption(b"pw")))
-    pem = tmp_path / f"{cn}.pem"
-    pem.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-    return str(p12), str(pem)
-
-
-def test_signature_trust_validation(pdf, tmp_path):
+def test_signature_trust_validation(pdf, tmp_path, selfsigned):
     from openrevu.sign import sign_pdf, verify_signatures
-    p12, pem = _selfsigned(tmp_path)
-    _, other_pem = _selfsigned(tmp_path, "Someone Else")
+    p12, pem = selfsigned()
+    _, other_pem = selfsigned("Someone Else")
     out = str(tmp_path / "s.pdf"); sign_pdf(pdf, out, p12, "pw")
     untrusted = verify_signatures(out)[0]
     assert untrusted["intact"] and untrusted["valid"] and not untrusted["trusted"] and untrusted["whole_file"]
@@ -856,9 +838,9 @@ def test_failed_operations_do_not_pollute_undo(pdf):
 
 
 # ---------- second-review regressions ----------
-def test_signature_verdict_catches_edits_after_signing(pdf, tmp_path):
+def test_signature_verdict_catches_edits_after_signing(pdf, tmp_path, selfsigned):
     from openrevu.sign import sign_pdf, verify_signatures
-    p12, pem = _selfsigned(tmp_path)
+    p12, pem = selfsigned()
     out = str(tmp_path / "s.pdf"); sign_pdf(pdf, out, p12, "pw")
     assert verify_signatures(out, [pem])[0]["verdict_ok"]
     assert not verify_signatures(out)[0]["verdict_ok"]            # untrusted
