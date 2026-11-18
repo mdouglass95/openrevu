@@ -1043,23 +1043,25 @@ class Main(DocumentOps, W.QMainWindow):
         if not self._need_doc():
             return
         from PyQt5 import QtPrintSupport as P
+        from .printing import print_document
         pr = P.QPrinter(P.QPrinter.HighResolution)
         if P.QPrintDialog(pr, self).exec_() != W.QDialog.Accepted:
             return
-        painter = QtGui.QPainter(pr)
-        for i in range(self.doc.page_count):
-            if i:
-                pr.newPage()
-            pix = self.doc.render(i, pr.resolution() / 72)
-            img = QtGui.QImage(pix.samples, pix.width, pix.height, pix.stride, QtGui.QImage.Format_RGB888)
-            rect = painter.viewport()
-            sz = img.size().scaled(rect.size(), QtCore.Qt.KeepAspectRatio)
-            painter.setViewport(rect.x(), rect.y(), sz.width(), sz.height())
-            painter.setWindow(img.rect())
-            painter.drawImage(0, 0, img)
-            painter.setViewport(rect)
-            painter.setWindow(rect)
-        painter.end()
+        dlg = W.QProgressDialog("Printing…", "Cancel", 0, 0, self)
+        dlg.setWindowTitle("Print")
+        dlg.setWindowModality(QtCore.Qt.WindowModal)   # setValue() then keeps the window and Cancel responsive
+        dlg.setMinimumDuration(500)
+
+        def progress(done, total):
+            dlg.setMaximum(total)
+            dlg.setValue(done)
+            return not dlg.wasCanceled()
+        try:
+            ok = print_document(pr, self.doc, progress)
+        finally:
+            dlg.close()
+            dlg.deleteLater()
+        self.statusBar().showMessage(f"Printed {self.doc.page_count} page(s)." if ok else "Printing cancelled.")
 
     # ---------- tools & the Properties toolbar ----------
     def set_tool(self, name, announce=True):

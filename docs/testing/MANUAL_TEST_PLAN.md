@@ -266,6 +266,13 @@ The three tools appear in *My Tools* and can be placed.
 **T46 Insert tools.** **Image**: choose a picture, drag a box (or click). **Snapshot**: drag a region, then paste in another program: a picture
 arrives. **Copy text**: drag over text, paste in a text editor: the text arrives.
 
+**T46b Print.** Open `plan_v1.pdf` and add a markup. Press Ctrl+P and print to a PDF file (**Print to File (PDF)** on Linux,
+**Microsoft Print to PDF** on Windows, **PDF > Save as PDF** on macOS). Open the result. Expect 3 pages, each sheet filling the paper and sharp, with the markup in place.
+Print `many_pages.pdf` the same way. Expect a **Print** window with a progress bar and **Cancel** after half a second.
+Press Cancel: printing stops within a second, and the status bar says "Printing cancelled.".
+If a large-format printer or a plotter driver is installed, print a sheet on ARCH E (36 x 48 in) paper at its highest
+resolution. Watch the program's memory in the system monitor: it must stay under 500 MB, and the program must not close.
+
 ### G. Saving, safety, and speed
 
 **T47 Save and reopen.** Add markups, a measurement scale, a sheet revision, a custom column. Save. Close. Open again.
