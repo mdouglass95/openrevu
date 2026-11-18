@@ -168,10 +168,9 @@ def compare_documents(old_path, new_path, out_path=None, match="sheet", dpi=100,
     if out is not None:
         if not len(out):
             out.new_page()
-        secret = old_password or new_password            # an overlay of protected files is protected too
-        enc = {"encryption": fitz.PDF_ENCRYPT_AES_256, "user_pw": secret, "owner_pw": secret + "-owner",
-               "permissions": -1} if secret else {}
-        out.save(out_path, garbage=3, deflate=True, **enc)
+        # an overlay of protected files is protected too: like the input with a password, else like a restricted one
+        src = next((d for d in (old, new) if d._password), None) or (old if old._encryption_kwargs() else new)
+        out.save(out_path, garbage=3, deflate=True, **src._encryption_kwargs())
         out.close()
     old.doc.close(); new.doc.close()
     return results

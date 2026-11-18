@@ -57,6 +57,10 @@ d = fitz.open(f"{OUT}/plan_v1.pdf")
 d.save(f"{OUT}/protected.pdf", encryption=fitz.PDF_ENCRYPT_AES_256, user_pw="test123", owner_pw="owner-test123",
        permissions=-1)
 
+# ---- restricted.pdf: no password to open, but only printing is allowed ----
+d.save(f"{OUT}/restricted.pdf", encryption=fitz.PDF_ENCRYPT_AES_256, user_pw="", owner_pw="owner-restricted",
+       permissions=fitz.PDF_PERM_PRINT | fitz.PDF_PERM_ACCESSIBILITY)
+
 # ---- scanned.pdf: a page that is only a picture of text (for OCR) ----
 src = fitz.open(); sp = src.new_page(width=612, height=792); sp.insert_text((72, 150), "INVOICE TOTAL 4500", fontsize=36)
 pix = sp.get_pixmap(dpi=200)
@@ -70,6 +74,16 @@ big = fitz.open()
 for i in range(1, 61):
     sheet(big, f"A-{i:03d}", f"Sheet {i}", f"Sheet {i} of 60")
 big.save(f"{OUT}/many_pages.pdf")
+
+# ---- large_sheet.pdf: one 36 x 24 in sheet with a labelled 1 in grid, for deep zoom ----
+ls = fitz.open(); lp = ls.new_page(width=2592, height=1728)
+for x in range(0, 2592, 72):
+    lp.draw_line((x, 0), (x, 1728), width=0.5)
+for y in range(0, 1728, 72):
+    lp.draw_line((0, y), (2592, y), width=0.5)
+    for x in range(0, 2592, 72):
+        lp.insert_text((x + 4, y + 12), f"{x // 72},{y // 72}", fontsize=6)
+ls.save(f"{OUT}/large_sheet.pdf")
 
 # ---- tools.btx: a Bluebeam tool set made to the community description (not a real Revu export) ----
 def item(name, text):
@@ -88,6 +102,30 @@ for i, n in enumerate(("name", "company")):
     w = fitz.Widget(); w.field_name, w.field_type = n, fitz.PDF_WIDGET_TYPE_TEXT; w.rect = fitz.Rect(72, 100 + 40 * i, 300, 120 + 40 * i)
     fp.add_widget(w)
 f.save(f"{OUT}/form.pdf")
+
+# ---- signed.pdf: plan_v1 with a digital signature (self-signed certificate; needs pyhanko from .[test]) ----
+def make_signed():
+    import datetime
+    import tempfile
+    from pathlib import Path
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.primitives.serialization import pkcs12
+
+    from openrevu.sign import sign_pdf
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, "Test Engineer")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+            .serial_number(1).not_valid_before(now - datetime.timedelta(days=1))
+            .not_valid_after(now + datetime.timedelta(days=3650)).sign(key, hashes.SHA256()))
+    with tempfile.TemporaryDirectory() as tmp:
+        p12 = Path(tmp) / "id.p12"
+        p12.write_bytes(pkcs12.serialize_key_and_certificates(b"id", key, cert, None, serialization.BestAvailableEncryption(b"pw")))
+        sign_pdf(Path(OUT) / "plan_v1.pdf", Path(OUT) / "signed.pdf", str(p12), "pw", reason="Sealed for permit")
+make_signed()
 
 expected = {
     "folder": OUT,

@@ -52,10 +52,13 @@ Optional programs (tests that need them say so):
 | `plan_v1.pdf` | 3 sheets: **A-101** and **A-102** (two rooms and a corridor, a 2 ft x 2 ft column, a dimension line) and **S-201** (text only) |
 | `plan_v2.pdf` | A later issue: S-201, A-101 (changed), A-103 (new). A-102 is gone. |
 | `protected.pdf` | A copy of plan_v1. The password is `test123`. |
+| `restricted.pdf` | A copy of plan_v1 that opens without a password but allows printing only (no markups, no changes) |
 | `scanned.pdf` | A page that is only a picture of the text `INVOICE TOTAL 4500` |
 | `rotated.pdf` | A sheet with a 90 degree page rotation |
 | `many_pages.pdf` | 60 sheets, for speed |
+| `large_sheet.pdf` | One 36 x 24 in sheet with a 1 in grid; each square is labelled with its column and row, like `12,7` |
 | `form.pdf` | A page with two empty text fields |
+| `signed.pdf` | A copy of plan_v1 with a digital signature (self-signed, so not trusted) |
 | `tools.btx` | A Bluebeam tool set (made to the community description) with 3 usable tools and 1 stamp |
 
 **The scale of the drawings:** 18 points = 1 foot. Every sheet has a dimension line labelled `20'-0"`. It is
@@ -114,6 +117,14 @@ clearly. Type `test123`. Expect it to open.
 **T06 Zoom.** Use the zoom box (type `150`, press Enter), the **+** and **−** buttons, Ctrl+mouse wheel, **Fit width**, and
 **Fit page**. Expect the zoom box and the status bar to agree. The page must stay sharp, not blurry.
 Type nonsense in the zoom box: expect the old value to come back.
+Ctrl+mouse wheel zooms around the mouse pointer: the word or line under the pointer stays under it. While you turn the wheel
+the picture may look soft; it must turn sharp a moment after you stop. The **+** and **−** buttons and the zoom box keep
+whatever is in the middle of the view in the middle.
+
+**T06b Deep zoom on a large sheet.** Open `large_sheet.pdf`. Put the pointer on one grid label and Ctrl+wheel in until the zoom
+stops growing. Expect: the label stays under the pointer, the text is sharp, and the program does not freeze or crash.
+Scroll the view in all four directions with the scroll bars and the mouse wheel: the grid must stay sharp everywhere, and
+scrolling may pause briefly but must not stutter all the time. Watch the program's memory in your system monitor: it must stay well under 1 GB.
 
 **T07 Pages.** Scroll through the pages. Use the page arrows, the page box (type `3`, Enter), PgUp, PgDown.
 Expect the page number in the toolbar and the status bar to follow what you see.
@@ -267,6 +278,13 @@ The three tools appear in *My Tools* and can be placed.
 **T46 Insert tools.** **Image**: choose a picture, drag a box (or click). **Snapshot**: drag a region, then paste in another program: a picture
 arrives. **Copy text**: drag over text, paste in a text editor: the text arrives.
 
+**T46b Print.** Open `plan_v1.pdf` and add a markup. Press Ctrl+P and print to a PDF file (**Print to File (PDF)** on Linux,
+**Microsoft Print to PDF** on Windows, **PDF > Save as PDF** on macOS). Open the result. Expect 3 pages, each sheet filling the paper and sharp, with the markup in place.
+Print `many_pages.pdf` the same way. Expect a **Print** window with a progress bar and **Cancel** after half a second.
+Press Cancel: printing stops within a second, and the status bar says "Printing cancelled.".
+If a large-format printer or a plotter driver is installed, print a sheet on ARCH E (36 x 48 in) paper at its highest
+resolution. Watch the program's memory in the system monitor: it must stay under 500 MB, and the program must not close.
+
 ### G. Saving, safety, and speed
 
 **T47 Save and reopen.** Add markups, a measurement scale, a sheet revision, a custom column. Save. Close. Open again.
@@ -274,6 +292,13 @@ Everything must be there. Open the saved file in a **different PDF viewer**: the
 On Windows, open the file in a program that locks it (Bluebeam Revu, or Word's PDF view). Add a markup and press Ctrl+S.
 Expect "Save failed: … is it open in another program?". Draw and undo: the tab still works, and no error dialog appears in the
 next 60 seconds. Close the other program and press Ctrl+S: the save works, and no `<file>.tmp` is left.
+
+**T47b Signed PDF.** Open `signed.pdf`. The status bar says "This PDF is digitally signed. Saving will invalidate the signatures."
+Add a markup and press Ctrl+S. Expect a warning with **Save As…** (the default), **Save anyway**, and **Cancel**.
+**Cancel**: nothing is saved. **Save As…**: a file dialog opens and the copy gets the markup. Open `signed.pdf` again and choose
+**Sign > Verify signatures…** (Cancel the certificate question): it must say `intact` and `unchanged since signing`.
+In that tab add a markup, press Ctrl+S, choose **Save anyway**: the file is overwritten, and Verify now says `MODIFIED` or
+`EDITED AFTER SIGNING`. Add another markup and press Ctrl+S: no second warning.
 
 **T48 Autosave and recovery.** Start the program with `OPENREVU_AUTOSAVE_SECONDS=5 openrevu`. Open a file, add two markups, wait 10 seconds.
 Kill the program hard (`kill -9 <pid>`, or end the task). Start it again. Expect a question: "OpenRevu closed unexpectedly last time…".
@@ -284,6 +309,13 @@ Every markup must appear **where you drew it** and move the way the mouse moves.
 
 **T50 Speed.** Open `many_pages.pdf` (60 pages). Scroll quickly, jump to page 60, open the Sheets tab, run **Detect**.
 Expect no long freezes (more than 2 seconds), and memory that does not keep growing.
+
+**T51 Restricted PDF.** Open `restricted.pdf`. It opens without a password. Expect an orange **This PDF restricts editing**
+label at the right of the status bar; point at it to read why. Switch to another tab: the label goes away. Back on
+`restricted.pdf`, add a markup and press Ctrl+S. Expect a file dialog titled "Save a copy (this PDF restricts editing)".
+Save as `restricted_copy.pdf`. The original `restricted.pdf` must be unchanged. Add another markup and press Ctrl+S: it saves
+`restricted_copy.pdf` without asking again. Open `restricted_copy.pdf` in a different PDF viewer and look at its security
+properties: it is still encrypted and still allows printing only.
 
 ### H. Visual and feel (look at the whole window)
 

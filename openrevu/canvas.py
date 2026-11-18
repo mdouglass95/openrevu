@@ -1,6 +1,8 @@
 """Continuous-scroll PDF canvas with markup tools, selection, move and resize."""
 from __future__ import annotations
 
+import math
+
 import pymupdf as fitz  # PyMuPDF
 from PyQt5 import QtCore, QtGui, QtWidgets as W
 
@@ -17,6 +19,13 @@ ALL_TOOLS = ["Select", "Rectangle", "Ellipse", "Line", "Arrow", "Polyline", "Clo
              "Calibrate", "Length", "Polyline", "Perimeter", "Area", "RectArea", "EllipseArea", "Volume",
              "Diameter", "Angle", "Count"]
 HANDLE = 8
+# Pages are rendered whole up to FULL_PAGE_PX pixels. A bigger page gets a backdrop of about BACKDROP_PX pixels,
+# with the visible region, plus DETAIL_MARGIN of the viewport size on each side, rendered on top at full resolution.
+FULL_PAGE_PX = 8_000_000
+BACKDROP_PX = 2_000_000
+DETAIL_MARGIN = 0.25
+ZOOM_MIN, ZOOM_MAX = 0.2, 8.0
+ZOOM_SETTLE_MS = 150   # wheel zoom scales the current picture at once and re-renders after this pause
 # tools that need a region with both a width and a height (a straight horizontal or vertical drag has no area)
 AREA_TOOLS = {"Rectangle", "Ellipse", "Cloud", "Highlight", "Underline", "Strikeout", "Squiggly", "Text", "Callout",
               "Redact", "RectArea", "EllipseArea", "Viewport", "Snapshot", "CopyText", "Link", "Image", "Stamp", "Signature"}
@@ -46,7 +55,8 @@ class Canvas(W.QGraphicsView):
         self.selected: Markup | None = None
         self.tool_chest_item = None  # callable(pno, pt) when placing a tool chest item
         self._rects: list[QtCore.QRectF] = []
-        self._pix: dict[int, W.QGraphicsPixmapItem] = {}
+        self._pix: dict[int, W.QGraphicsPixmapItem] = {}      # whole page, or a low-resolution backdrop
+        self._detail: dict[int, W.QGraphicsPixmapItem] = {}   # full-resolution visible part of a backdrop page
         self._overlay: list = []
         self._hits: list = []
         self._hit_items: list = []
@@ -56,7 +66,12 @@ class Canvas(W.QGraphicsView):
         self._mode = None   # 'move' | 'resize' | 'pan' | None
         self._last = None
         self._cur_page = 0
+        self._hold_render = False  # while True, render_visible does nothing (a zoom is in progress)
+        self._wheel_zoom = None    # (zoom, viewport position) of a wheel zoom waiting to settle
+        self._settle_timer = QtCore.QTimer(self, singleShot=True, interval=ZOOM_SETTLE_MS)
+        self._settle_timer.timeout.connect(self._settle_wheel_zoom)
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
+        self.horizontalScrollBar().valueChanged.connect(self.render_visible)
         self.relayout()
         self.set_tool("Select")
 
@@ -69,8 +84,11 @@ class Canvas(W.QGraphicsView):
 
     # ---------- layout & rendering ----------
     def relayout(self):
+        if self._wheel_zoom:                              # finish the wheel zoom; it lays out anyway
+            return self._settle_wheel_zoom()
         self.scene().clear()
         self._pix.clear()
+        self._detail.clear()
         self._overlay.clear()
         self._hit_items.clear()
         self._rects = []
@@ -88,37 +106,79 @@ class Canvas(W.QGraphicsView):
         self._draw_selection()
         self._draw_hits()
 
-    def _visible_pages(self, margin=1.0):
-        vr = self.mapToScene(self.viewport().rect()).boundingRect()
-        pad = vr.height() * margin
-        top, bot = vr.top() - pad, vr.bottom() + pad
+    def _visible_pages(self, view, margin=1.0):
+        pad = view.height() * margin
+        top, bot = view.top() - pad, view.bottom() + pad
         return [i for i, r in enumerate(self._rects) if r.bottom() >= top and r.top() <= bot]
 
     def render_visible(self):
-        want = set(self._visible_pages())
+        if self._hold_render:
+            return
+        view = self.mapToScene(self.viewport().rect()).boundingRect()
+        want = set(self._visible_pages(view))
         for i in list(self._pix):
             if i not in want:
-                self.scene().removeItem(self._pix.pop(i))
+                self._drop(i)
         for i in want:
-            if i not in self._pix and i < len(self._rects):
+            if i not in self._pix:
                 self._render_page(i)
+            if self._full_px(i) > FULL_PAGE_PX:
+                self._render_detail(i, view)
+
+    def _dpr(self):
+        return max(1.0, self.devicePixelRatioF())     # on a high-DPI screen render more pixels, so the page is sharp
+
+    def _full_px(self, i):
+        """Pixels page i needs when rendered whole at full resolution."""
+        r = self._rects[i]
+        return r.width() * r.height() * self._dpr() ** 2
 
     def _render_page(self, i):
-        dpr = max(1.0, self.devicePixelRatioF())          # on a high-DPI screen render more pixels, so the page is sharp
-        pix = self.doc.render(i, self.zoom * dpr)
-        img = QtGui.QImage(pix.samples, pix.width, pix.height, pix.stride, QtGui.QImage.Format_RGB888)
+        """Render page i whole, or, when that would need too many pixels, as a low-resolution backdrop
+        that _render_detail covers with the visible part at full resolution."""
+        scale = self.zoom * self._dpr()
+        px = self._full_px(i)
+        if px > FULL_PAGE_PX:
+            scale *= math.sqrt(BACKDROP_PX / px)
+        self._pix[i] = self._add_pixmap(i, scale, 1)
+
+    def _render_detail(self, i, view):
+        """Cover the visible part of page i (plus a margin) with a full-resolution pixmap, unless one already does."""
+        page = self._rects[i]
+        seen = view.intersected(page)
+        old = self._detail.get(i)
+        if seen.isEmpty() or (old is not None and old.sceneBoundingRect().adjusted(-1, -1, 1, 1).contains(seen)):
+            return
+        if old is not None:
+            self.scene().removeItem(old)
+        mx, my = view.width() * DETAIL_MARGIN, view.height() * DETAIL_MARGIN
+        area = view.adjusted(-mx, -my, mx, my).intersected(page).translated(-page.topLeft())
+        z = self.zoom
+        clip = fitz.Rect(area.left() / z, area.top() / z, area.right() / z, area.bottom() / z)
+        self._detail[i] = self._add_pixmap(i, z * self._dpr(), 2, clip)
+
+    def _add_pixmap(self, i, scale, z_value, clip=None):
+        pix = self.doc.render(i, scale, clip)
+        img = QtGui.QImage(pix.samples_mv, pix.width, pix.height, pix.stride, QtGui.QImage.Format_RGB888)
         qpix = QtGui.QPixmap.fromImage(img.copy())
-        qpix.setDevicePixelRatio(dpr)                     # the logical size stays the same, so all coordinates are unchanged
+        ratio = scale / self.zoom                         # pixels per scene unit, so the logical size matches the layout
+        qpix.setDevicePixelRatio(ratio)
         item = self.scene().addPixmap(qpix)
-        item.setPos(self._rects[i].topLeft())
-        item.setZValue(1)
-        self._pix[i] = item
+        item.setPos(self._rects[i].topLeft() + QtCore.QPointF(pix.x, pix.y) / ratio)
+        item.setZValue(z_value)
+        return item
+
+    def _drop(self, i):
+        for items in (self._pix, self._detail):
+            if i in items:
+                self.scene().removeItem(items.pop(i))
 
     def invalidate(self, pages=None):
         """Re-render pages (all if None) after an edit."""
+        if self._wheel_zoom:                              # the settled zoom renders every page afresh
+            return self._settle_wheel_zoom()
         for i in list(self._pix) if pages is None else pages:
-            if i in self._pix:
-                self.scene().removeItem(self._pix.pop(i))
+            self._drop(i)
         self.render_visible()
         self._draw_selection()
 
@@ -158,19 +218,51 @@ class Canvas(W.QGraphicsView):
     def current_page(self) -> int:
         return self._cur_page
 
-    def set_zoom(self, z):
-        z = max(0.2, min(8.0, z))
-        keep = self._cur_page
-        self.zoom = z
-        self.relayout()
-        self.goto_page(keep)
+    def set_zoom(self, z, anchor: QtCore.QPoint | None = None):
+        """Zoom to z, keeping the document point under `anchor` (a viewport position; default: the
+        viewport centre) where it is on screen."""
+        pos = self.viewport().rect().center() if anchor is None else anchor
+        self._zoom_to(z, pos, self._doc_point(pos))
+
+    def _zoom_to(self, z, pos, keep):
+        """Zoom to z, then scroll so `keep` (page, PDF point) is at viewport position pos. Renders once."""
+        z = max(ZOOM_MIN, min(ZOOM_MAX, z))
+        self._settle_timer.stop()
+        self._wheel_zoom = None
+        self._hold_render = True                          # render once, at the final scroll position
+        try:
+            self.resetTransform()
+            self.zoom = z
+            self.relayout()
+            if keep is not None:
+                self._put_under(pos, *keep)
+        finally:
+            self._hold_render = False
+        self._on_scroll()
         self.zoom_changed.emit(z)
+
+    def _doc_point(self, pos):
+        """(page, PDF point) shown at viewport position pos; outside the pages, relative to the nearest one."""
+        if not self._rects:
+            return None
+        sp = self.mapToScene(pos)
+        pno = self.page_at(sp)
+        if pno is None:
+            pno = min(range(len(self._rects)), key=lambda i: abs(self._rects[i].center().y() - sp.y()))
+        return pno, self._to_pdf(pno, sp)
+
+    def _put_under(self, pos, pno, pt):
+        """Scroll so PDF point pt of page pno is at viewport position pos (as near as the scroll range allows)."""
+        at = self.viewportTransform().map(self._to_scene(pno, pt))
+        for bar, d in ((self.horizontalScrollBar(), at.x() - pos.x()), (self.verticalScrollBar(), at.y() - pos.y())):
+            bar.setValue(bar.value() + round(d))
 
     def fit_page(self):
         if self.doc.page_count:
             pg = self.doc.doc[self._cur_page].rect
             vp = self.viewport()
-            self.set_zoom(min((vp.width() - 2 * GAP) / pg.width, (vp.height() - 2 * GAP) / pg.height))
+            z = min((vp.width() - 2 * GAP) / pg.width, (vp.height() - 2 * GAP) / pg.height)
+            self._zoom_to(z, QtCore.QPoint(vp.width() // 2, GAP), (self._cur_page, (pg.width / 2, 0)))   # page top at the top
 
     def fit_width(self):
         if self.doc.page_count:
@@ -624,9 +716,27 @@ class Canvas(W.QGraphicsView):
 
     def wheelEvent(self, ev):
         if ev.modifiers() & QtCore.Qt.ControlModifier:
-            self.set_zoom(self.zoom * (1.15 if ev.angleDelta().y() > 0 else 1 / 1.15))
+            # scale what is on screen now, keeping the point under the cursor in place; render when the wheel stops
+            pos = ev.pos()
+            now = self._wheel_zoom[0] if self._wheel_zoom else self.zoom
+            z = max(ZOOM_MIN, min(ZOOM_MAX, now * (1.15 if ev.angleDelta().y() > 0 else 1 / 1.15)))
+            if z == now:                                  # already at the limit
+                return
+            keep = self._doc_point(pos)
+            self._wheel_zoom = (z, pos)
+            self._hold_render = True
+            self.setTransform(QtGui.QTransform.fromScale(z / self.zoom, z / self.zoom))
+            if keep is not None:
+                self._put_under(pos, *keep)
+            self._settle_timer.start()
         else:
+            self._settle_wheel_zoom()
             super().wheelEvent(ev)
+
+    def _settle_wheel_zoom(self):
+        """Lay out and render at the zoom the wheel asked for (when a wheel zoom is waiting)."""
+        if self._wheel_zoom:
+            self.set_zoom(*self._wheel_zoom)
 
     def keyPressEvent(self, ev):
         if ev.key() == QtCore.Qt.Key_Escape:
