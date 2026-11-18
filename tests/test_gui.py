@@ -768,3 +768,16 @@ def test_a_recovered_signed_pdf_does_not_offer_its_signed_original_as_the_file_n
                         staticmethod(lambda parent, title, start, *a: asked.update(start=start) or ("", "")))
     w.save()
     assert asked["start"] != signed_pdf
+
+
+def test_a_signed_pdf_that_must_be_saved_as_a_copy_skips_the_signed_question(signed_win, signed_pdf, monkeypatch, tmp_path):
+    w = signed_win
+    w.doc.save_as_required = True                       # what a restricted PDF sets on open
+    original = Path(signed_pdf).read_bytes()
+    w.doc.add_rect(0, fitz.Rect(100, 100, 200, 200))
+    seen = answer_with(monkeypatch, "Save anyway")      # "Save anyway" would overwrite a file that must stay as issued
+    copy = str(tmp_path / "copy.pdf")
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (copy, "")))
+    w.save()
+    assert seen["asked"] == 0 and Path(signed_pdf).read_bytes() == original
+    assert w.doc.path == copy and len(Document(copy).markups()) == 1

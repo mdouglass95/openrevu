@@ -9,6 +9,7 @@ import json
 import math
 import os
 import re
+import secrets
 from dataclasses import dataclass
 
 import pymupdf as fitz  # PyMuPDF
@@ -30,6 +31,8 @@ COLUMN_TYPES = ("text", "number", "choice")
 BASE_COLUMNS = ("Page", "Subject", "Type", "Author", "Status", "Comment", "Value")
 RECREATABLE_KINDS = {"Square", "Circle", "Line", "PolyLine", "Polygon", "Ink", "FreeText", "Text"}  # can be copied / saved as tools
 RESIZABLE_MEASURES = {"length", "perimeter", "area", "volume", "diameter", "angle"}
+MEASURE_KINDS = RESIZABLE_MEASURES | {"count"}
+MEASURE_UNITS = set(UNITS) | {"deg", "ea"}  # deg for angles, ea for counts
 
 
 @dataclass
@@ -38,19 +41,24 @@ class Scale:
     unit: str = "ft"
     unit_per_pt: float = 1 / 72 / 12  # 1 pt == 1/72 in, i.e. 1:1 paper
 
+    def __post_init__(self):
+        # Scales can come from untrusted PDF metadata, and the unit is written into PDF string literals.
+        if self.unit not in UNITS:
+            raise ValueError(f"unknown unit {self.unit!r}")
+        if not math.isfinite(self.unit_per_pt) or self.unit_per_pt <= 0:
+            raise ValueError(f"invalid unit_per_pt {self.unit_per_pt!r}")
+
     @classmethod
     def from_calibration(cls, p1, p2, real_length: float, unit: str) -> "Scale":
         d = math.dist(p1, p2)
         if d <= 0 or real_length <= 0:
             raise ValueError("calibration needs two distinct points and a positive length")
-        if unit not in UNITS:
-            raise ValueError(f"unknown unit {unit!r}")
         return cls(unit, real_length / d)
 
     @classmethod
     def from_ratio(cls, paper_in: float, real: float, unit: str) -> "Scale":
         """e.g. 1/4 in on paper = 1 ft real: from_ratio(0.25, 1, 'ft')."""
-        if paper_in <= 0 or real <= 0 or unit not in UNITS:
+        if paper_in <= 0 or real <= 0:
             raise ValueError("invalid ratio")
         return cls(unit, real / (paper_in * 72))
 
@@ -216,8 +224,14 @@ class Markup:
         v = _xget(self.d.doc, self.xref, MEASURE_KEY)
         if not v:
             return None
-        kind, val, unit = v.split(":", 2)
-        return kind, float(val), unit
+        try:  # OR_Measure comes from the PDF, so a hand-edited or foreign file can hold anything
+            kind, val, unit = v.split(":", 2)
+            val = float(val)
+        except ValueError:
+            return None
+        if kind not in MEASURE_KINDS or unit not in MEASURE_UNITS or not math.isfinite(val):
+            return None
+        return kind, val, unit
 
     def custom(self) -> dict:
         """Values of the custom columns that are set on this markup."""
@@ -489,10 +503,19 @@ class Document(SheetOps, PageOps):
     def __init__(self, path: str | None = None, password: str | None = None):
         self.doc = self._open(path) if path else fitz.open()
         encrypted = bool(self.doc.needs_pass)
-        if encrypted and not (password and self.doc.authenticate(password)):
+        p = self.doc.xref_get_key(-1, "Encrypt/P")
+        # The file's own permission bits, re-applied on save; None if the file is not encrypted.
+        self._permissions = int(p[1]) if p[0] == "int" else None
+        auth = self.doc.authenticate(password) if password and self._permissions is not None else 0
+        if encrypted and not auth:
             raise PermissionError("password required or incorrect")
         self.path = path
         self._password = password if encrypted else None  # re-applied on save so protection is never silently dropped
+        is_owner = bool(auth & 4)                # authenticate() sets bit 4 for the owner password
+        # What this user may do: everything for an unencrypted file or the owner, else what the file allows.
+        self._allowed = -1 if self._permissions is None or is_owner else self._permissions
+        self._owner_pw = password if is_owner else secrets.token_urlsafe(24)   # used only if the file is encrypted
+        self.save_as_required = self.restricted   # for UIs: do not overwrite a restricted file as issued
         self.author = getpass.getuser()
         self._depth = 0
         self.generation = 0
@@ -608,20 +631,25 @@ class Document(SheetOps, PageOps):
         self._store_scales()
         return self._dump()
 
+    @property
+    def restricted(self) -> bool:
+        """True if the PDF forbids markups or changes and was not opened with its owner password."""
+        need = fitz.PDF_PERM_ANNOTATE | fitz.PDF_PERM_MODIFY
+        return self._allowed & need != need
+
     def _encryption_kwargs(self) -> dict:
-        """Arguments that protect a file written from this document, if the document was opened with a password.
+        """Arguments that protect a file written from this document the way the opened file was protected: the same
+        user password and permissions, and the owner password if the user gave it (else a random one).
         Every file that OpenRevu derives from a protected document (copies, extracts, reports) uses them."""
-        if not self._password:
+        if self._permissions is None:
             return {}
-        return dict(encryption=fitz.PDF_ENCRYPT_AES_256, user_pw=self._password, owner_pw=self._password + "-owner",
-                    permissions=-1)
+        return dict(encryption=fitz.PDF_ENCRYPT_AES_256, user_pw=self._password or "", owner_pw=self._owner_pw,
+                    permissions=self._permissions)
 
     def _dump(self) -> bytes:
-        """Serialize for the undo history; protected documents never leave plaintext copies in memory."""
-        if self._password:
-            return self.doc.tobytes(encryption=fitz.PDF_ENCRYPT_AES_256, user_pw=self._password,
-                                    owner_pw=self._password + "-owner", permissions=-1)
-        return self.doc.tobytes()
+        """Serialize for the undo history and autosave. Protected documents never leave plaintext copies in memory,
+        and a snapshot of an encrypted file stays encrypted so a recovered copy keeps its permissions."""
+        return self.doc.tobytes(**self._encryption_kwargs())
 
     # --- scales (default + per page), persisted in PDF keywords ---
     def _load_scales(self):
@@ -1167,6 +1195,7 @@ class Document(SheetOps, PageOps):
         else:
             self.doc.save(path, **kw)
             self.path = path
+            self.save_as_required = False   # the new file is the user's own copy
         self.modified = False
 
 

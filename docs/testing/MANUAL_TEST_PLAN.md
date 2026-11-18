@@ -52,6 +52,7 @@ Optional programs (tests that need them say so):
 | `plan_v1.pdf` | 3 sheets: **A-101** and **A-102** (two rooms and a corridor, a 2 ft x 2 ft column, a dimension line) and **S-201** (text only) |
 | `plan_v2.pdf` | A later issue: S-201, A-101 (changed), A-103 (new). A-102 is gone. |
 | `protected.pdf` | A copy of plan_v1. The password is `test123`. |
+| `restricted.pdf` | A copy of plan_v1 that opens without a password but allows printing only (no markups, no changes) |
 | `scanned.pdf` | A page that is only a picture of the text `INVOICE TOTAL 4500` |
 | `rotated.pdf` | A sheet with a 90 degree page rotation |
 | `many_pages.pdf` | 60 sheets, for speed |
@@ -266,6 +267,13 @@ The three tools appear in *My Tools* and can be placed.
 **T46 Insert tools.** **Image**: choose a picture, drag a box (or click). **Snapshot**: drag a region, then paste in another program: a picture
 arrives. **Copy text**: drag over text, paste in a text editor: the text arrives.
 
+**T46b Print.** Open `plan_v1.pdf` and add a markup. Press Ctrl+P and print to a PDF file (**Print to File (PDF)** on Linux,
+**Microsoft Print to PDF** on Windows, **PDF > Save as PDF** on macOS). Open the result. Expect 3 pages, each sheet filling the paper and sharp, with the markup in place.
+Print `many_pages.pdf` the same way. Expect a **Print** window with a progress bar and **Cancel** after half a second.
+Press Cancel: printing stops within a second, and the status bar says "Printing cancelled.".
+If a large-format printer or a plotter driver is installed, print a sheet on ARCH E (36 x 48 in) paper at its highest
+resolution. Watch the program's memory in the system monitor: it must stay under 500 MB, and the program must not close.
+
 ### G. Saving, safety, and speed
 
 **T47 Save and reopen.** Add markups, a measurement scale, a sheet revision, a custom column. Save. Close. Open again.
@@ -290,6 +298,13 @@ Every markup must appear **where you drew it** and move the way the mouse moves.
 
 **T50 Speed.** Open `many_pages.pdf` (60 pages). Scroll quickly, jump to page 60, open the Sheets tab, run **Detect**.
 Expect no long freezes (more than 2 seconds), and memory that does not keep growing.
+
+**T51 Restricted PDF.** Open `restricted.pdf`. It opens without a password. Expect an orange **This PDF restricts editing**
+label at the right of the status bar; point at it to read why. Switch to another tab: the label goes away. Back on
+`restricted.pdf`, add a markup and press Ctrl+S. Expect a file dialog titled "Save a copy (this PDF restricts editing)".
+Save as `restricted_copy.pdf`. The original `restricted.pdf` must be unchanged. Add another markup and press Ctrl+S: it saves
+`restricted_copy.pdf` without asking again. Open `restricted_copy.pdf` in a different PDF viewer and look at its security
+properties: it is still encrypted and still allows printing only.
 
 ### H. Visual and feel (look at the whole window)
 

@@ -57,6 +57,10 @@ d = fitz.open(f"{OUT}/plan_v1.pdf")
 d.save(f"{OUT}/protected.pdf", encryption=fitz.PDF_ENCRYPT_AES_256, user_pw="test123", owner_pw="owner-test123",
        permissions=-1)
 
+# ---- restricted.pdf: no password to open, but only printing is allowed ----
+d.save(f"{OUT}/restricted.pdf", encryption=fitz.PDF_ENCRYPT_AES_256, user_pw="", owner_pw="owner-restricted",
+       permissions=fitz.PDF_PERM_PRINT | fitz.PDF_PERM_ACCESSIBILITY)
+
 # ---- scanned.pdf: a page that is only a picture of text (for OCR) ----
 src = fitz.open(); sp = src.new_page(width=612, height=792); sp.insert_text((72, 150), "INVOICE TOTAL 4500", fontsize=36)
 pix = sp.get_pixmap(dpi=200)

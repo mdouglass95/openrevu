@@ -852,9 +852,17 @@ class Main(DocumentOps, W.QMainWindow):
         for lbl in (self.lbl_scale, self.lbl_page, self.lbl_zoom):
             lbl.setStyleSheet("padding: 0 10px;")
             sb.addPermanentWidget(lbl)
+        self.lbl_restricted = W.QLabel("This PDF restricts editing")
+        self.lbl_restricted.setStyleSheet("padding: 0 10px; color: white; background: #b35900;")
+        self.lbl_restricted.setToolTip("The author of this PDF does not allow markups or changes. You can still add them, "
+                                       "but Save asks for a new file name, so the original stays as issued. "
+                                       "The copy keeps the same restrictions.")
+        self.lbl_restricted.hide()
+        sb.addPermanentWidget(self.lbl_restricted)
 
     def _update_status_widgets(self):
         cv = self.cv
+        self.lbl_restricted.setVisible(bool(cv) and cv.doc.restricted)
         if not cv:
             for lbl in (self.lbl_scale, self.lbl_page, self.lbl_zoom):
                 lbl.setText("")
@@ -982,7 +990,7 @@ class Main(DocumentOps, W.QMainWindow):
         return {save_as: "save_as", anyway: "anyway"}.get(box.clickedButton(), "cancel")
 
     def _save(self, d: Document) -> bool:
-        in_place = bool(d.path)
+        in_place = bool(d.path) and not d.save_as_required
         if in_place and d.signed and d.recovery_id not in self._rewritten:
             choice = self._ask_save_signed()
             if choice == "cancel":
@@ -992,9 +1000,10 @@ class Main(DocumentOps, W.QMainWindow):
             if in_place:
                 d.save()
             else:
+                title = "Save a copy (this PDF restricts editing)" if d.restricted else "Save"
                 # a signed document's suggested path is its signed original: overwriting it is what the warning is about
                 start = "" if d.signed else getattr(d, "suggested_path", None) or ""
-                p, _ = W.QFileDialog.getSaveFileName(self, "Save", start, "PDF (*.pdf)")
+                p, _ = W.QFileDialog.getSaveFileName(self, title, start, "PDF (*.pdf)")
                 if not p:
                     return False
                 d.save(p)
@@ -1063,23 +1072,25 @@ class Main(DocumentOps, W.QMainWindow):
         if not self._need_doc():
             return
         from PyQt5 import QtPrintSupport as P
+        from .printing import print_document
         pr = P.QPrinter(P.QPrinter.HighResolution)
         if P.QPrintDialog(pr, self).exec_() != W.QDialog.Accepted:
             return
-        painter = QtGui.QPainter(pr)
-        for i in range(self.doc.page_count):
-            if i:
-                pr.newPage()
-            pix = self.doc.render(i, pr.resolution() / 72)
-            img = QtGui.QImage(pix.samples, pix.width, pix.height, pix.stride, QtGui.QImage.Format_RGB888)
-            rect = painter.viewport()
-            sz = img.size().scaled(rect.size(), QtCore.Qt.KeepAspectRatio)
-            painter.setViewport(rect.x(), rect.y(), sz.width(), sz.height())
-            painter.setWindow(img.rect())
-            painter.drawImage(0, 0, img)
-            painter.setViewport(rect)
-            painter.setWindow(rect)
-        painter.end()
+        dlg = W.QProgressDialog("Printing…", "Cancel", 0, 0, self)
+        dlg.setWindowTitle("Print")
+        dlg.setWindowModality(QtCore.Qt.WindowModal)   # setValue() then keeps the window and Cancel responsive
+        dlg.setMinimumDuration(500)
+
+        def progress(done, total):
+            dlg.setMaximum(total)
+            dlg.setValue(done)
+            return not dlg.wasCanceled()
+        try:
+            ok = print_document(pr, self.doc, progress)
+        finally:
+            dlg.close()
+            dlg.deleteLater()
+        self.statusBar().showMessage(f"Printed {self.doc.page_count} page(s)." if ok else "Printing cancelled.")
 
     # ---------- tools & the Properties toolbar ----------
     def set_tool(self, name, announce=True):

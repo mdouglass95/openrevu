@@ -1,11 +1,12 @@
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+import json
 import math
 
 import fitz
 import pytest
 
-from openrevu.core import Document, Scale, cloud_points, polygon_area
+from openrevu.core import TAG, Document, Scale, cloud_points, polygon_area
 
 
 @pytest.fixture
@@ -158,3 +159,36 @@ def test_csv_and_render(pdf, tmp_path):
     assert len(rows) == 3 and "Length" in rows[1]
     pix = doc.render(0, 1.5)
     assert pix.width == pytest.approx(612 * 1.5, abs=1)
+
+
+def test_injected_scale_unit_falls_back_to_default_and_adds_no_action(pdf):
+    evil = "ft)/A<</S/URI/URI(https://evil.example)>>/X("
+    blob = {"default": {"unit": evil, "unit_per_pt": 0.01}, "pages": {}}
+    with fitz.open(pdf) as d:
+        d.set_metadata({"keywords": f"{TAG}-scales=" + json.dumps(blob)})
+        d.saveIncr()
+    doc = Document(pdf)
+    assert doc.default_scale == Scale()
+    doc.add_length(0, [(72, 72), (144, 72)], label=False)
+    (m,) = doc.markups()
+    assert doc.doc.xref_get_key(m.xref, "A") == ("null", "null")
+    assert m.measurement()[2] == "ft"
+
+
+@pytest.mark.parametrize("unit, unit_per_pt", [("ft", math.nan), ("ft", math.inf), ("ft", 0), ("ft", -1), ("ft)", 1)])
+def test_scale_rejects_bad_values(unit, unit_per_pt):
+    with pytest.raises(ValueError):
+        Scale(unit, unit_per_pt)
+
+
+@pytest.mark.parametrize("raw", ["(garbage)", "(length:abc:ft)", "(bogus:1:ft)", "(length:nan:ft)",
+                                 "(length:1:ft/A)"])
+def test_malformed_measure_is_listed_as_non_measurement(pdf, raw):
+    doc = Document(pdf)
+    doc.add_length(0, [(72, 72), (144, 72)], label=False)
+    (m,) = doc.markups()
+    doc.doc.xref_set_key(m.xref, "OR_Measure", raw)
+    (m,) = doc.markups()
+    assert m.measurement() is None
+    assert doc.takeoff() == {}
+    assert doc.takeoff_by_subject() == {}
