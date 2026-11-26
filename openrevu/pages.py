@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime
 import os
+import secrets
 import shutil
 
 import pymupdf as fitz  # PyMuPDF
@@ -112,11 +113,16 @@ class PageOps:
 
     def extract_pages(self, pnos, out_path):
         self._check(pnos)
+        with self._copy() as src:
+            return self._extract(src, pnos, out_path)
+
+    def _extract(self, src, pnos, out_path):
+        """Write pages of `src` (a copy of this document, see _copy) to a new file."""
         from .sheets import copy_records
         out = fitz.open()
         for p in pnos:
-            out.insert_pdf(self.doc, from_page=p, to_page=p)
-        copy_records(self.doc, pnos, out, 0)
+            out.insert_pdf(src, from_page=p, to_page=p)
+        copy_records(src, pnos, out, 0)
         self._write_settings(out, list(pnos))      # scales, viewports, custom columns, and the unit style go with the pages
         out.save(out_path, garbage=3, deflate=True, **self._encryption_kwargs())   # a protected document stays protected
         return out_path
@@ -130,10 +136,11 @@ class PageOps:
             ranges = [(i, min(i + every, n) - 1) for i in range(0, n, every)]
         os.makedirs(out_dir, exist_ok=True)
         outs = []
-        for i, (a, b) in enumerate(ranges, 1):
-            if not 0 <= a <= b < n:
-                raise IndexError(f"bad range {(a, b)}")
-            outs.append(self.extract_pages(list(range(a, b + 1)), os.path.join(out_dir, f"{prefix}_{i:03d}.pdf")))
+        with self._copy() as src:      # one copy for all the parts
+            for i, (a, b) in enumerate(ranges, 1):
+                if not 0 <= a <= b < n:
+                    raise IndexError(f"bad range {(a, b)}")
+                outs.append(self._extract(src, list(range(a, b + 1)), os.path.join(out_dir, f"{prefix}_{i:03d}.pdf")))
         return outs
 
     @classmethod
@@ -331,9 +338,10 @@ class PageOps:
             perm |= fitz.PDF_PERM_COPY
         if allow_modify:
             perm |= fitz.PDF_PERM_MODIFY | fitz.PDF_PERM_ANNOTATE | fitz.PDF_PERM_FORM
+        perm &= self._allowed          # a copy never allows more than the file's author allowed this user
         self._store_scales()
         self.doc.save(path, encryption=fitz.PDF_ENCRYPT_AES_256, user_pw=user_pw,
-                      owner_pw=owner_pw or user_pw + "-owner", permissions=perm, garbage=3, deflate=True)
+                      owner_pw=owner_pw or secrets.token_urlsafe(24), permissions=perm, garbage=3, deflate=True)
 
     @mutates
     def set_metadata(self, **fields):

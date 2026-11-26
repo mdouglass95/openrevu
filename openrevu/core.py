@@ -9,11 +9,14 @@ import hashlib
 import json
 import math
 import os
+import re
+import secrets
+import time
 from dataclasses import dataclass
 
 import pymupdf as fitz  # PyMuPDF
 
-from . import pdfmeasure
+from . import _journal, pdfmeasure
 from ._util import mutates as _mutates
 from .pages import PageOps
 from .sheets import SheetOps
@@ -174,6 +177,15 @@ def _xget(doc, xref, key):
     return None if t == "null" else v
 
 
+def _refs(doc, kind, value) -> list[int]:
+    """The xrefs in a PDF array value from xref_get_key, following one indirect reference to the array."""
+    if kind == "xref":
+        value = doc.xref_object(int(value.split()[0]), compressed=True)
+    elif kind != "array":
+        return []
+    return [int(n) for n in re.findall(r"(\d+) \d+ R", value)]
+
+
 class Markup:
     """A PDF annotation plus OpenRevu metadata (measurement, status, replies)."""
 
@@ -285,12 +297,12 @@ class Markup:
                 raise ValueError(f"{value!r} is not one of {col['choices']}")
         else:
             value = str(value)
-        self._edit()
         vals = {k: v for k, v in self.custom().items() if k != name}
         if value is not None:
             vals[name] = value
         enc = base64.b64encode(json.dumps(vals, ensure_ascii=False).encode("utf-8")).decode("ascii")
-        self.d.doc.xref_set_key(self.xref, CUSTOM_KEY, f"({enc})" if vals else "null")
+        with self._edit():
+            self.d.doc.xref_set_key(self.xref, CUSTOM_KEY, f"({enc})" if vals else "null")
 
     def replies(self):
         out = []
@@ -299,48 +311,47 @@ class Markup:
                 out.append((a.info.get("title", ""), a.info.get("content", "")))
         return out
 
-    # --- editing (each checkpoints for undo) ---
-    def _edit(self):
-        self.d.checkpoint()
+    # --- editing (each is one undo step) ---
+    def _edit(self, merge=None):
+        return self.d._operation("edit markup", merge)
 
     def set_colors(self, stroke=None, fill=None):
-        self._edit()
         kw = {}
         if stroke is not None:
             kw["stroke"] = stroke
         if fill is not None:
             kw["fill"] = fill
-        self.annot.set_colors(**kw)
-        self.annot.update()
+        with self._edit():
+            self.annot.set_colors(**kw)
+            self.annot.update()
 
     def set_width(self, w):
-        self._edit()
-        self.annot.set_border(width=w)
-        self.annot.update()
+        """Consecutive width changes of one markup are one undo step (a spin box sends one per click)."""
+        with self._edit(merge=("width", self.xref)):
+            self.annot.set_border(width=w)
+            self.annot.update()
 
     def set_opacity(self, o):
-        self._edit()
-        self.annot.set_opacity(o)
-        self.annot.update()
+        """Consecutive opacity changes of one markup are one undo step."""
+        with self._edit(merge=("opacity", self.xref)):
+            self.annot.set_opacity(o)
+            self.annot.update()
 
     def set_subject(self, s):
-        self._edit()
-        self.annot.set_info(subject=s)
-        self.annot.update()
+        with self._edit():
+            self.annot.set_info(subject=s)
+            self.annot.update()
 
     def set_comment(self, c):
-        self._edit()
-        self.annot.set_info(content=c)
-        self.annot.update()
+        with self._edit():
+            self.annot.set_info(content=c)
+            self.annot.update()
 
     def set_status(self, s):
         if s not in STATUSES:
             raise ValueError(f"unknown status {s!r}")
-        self._edit()
-        if s:
-            self.d.doc.xref_set_key(self.xref, STATUS_KEY, f"({s})")
-        else:
-            self.d.doc.xref_set_key(self.xref, STATUS_KEY, "null")
+        with self._edit():
+            self.d.doc.xref_set_key(self.xref, STATUS_KEY, f"({s})" if s else "null")
 
     def _children(self):
         return [a for a in self._page.annots() or []
@@ -365,8 +376,8 @@ class Markup:
         """Move by (dx, dy) in visual coordinates."""
         self._check_transformable()
         new = self.rect + (dx, dy, dx, dy)
-        self._edit()
-        self._apply(self.d._ru(self.page_no, new))
+        with self._edit():
+            self._apply(self.d._ru(self.page_no, new))
 
     def resize(self, new_rect):
         """Resize to new_rect (visual coordinates). Measurements are re-measured."""
@@ -378,10 +389,10 @@ class Markup:
         old = self.annot.rect
         if old.width == 0 or old.height == 0:
             raise ValueError("degenerate markup")
-        self._edit()
-        self._apply(self.d._ru(self.page_no, new_rect))
-        if m:
-            self._remeasure(m[0])
+        with self._edit():
+            self._apply(self.d._ru(self.page_no, new_rect))
+            if m:
+                self._remeasure(m[0])
 
     def _children_markups(self):
         return [Markup(c, self.page_no, self._page, self.d) for c in self._children()]
@@ -528,10 +539,19 @@ class Document(SheetOps, PageOps):
     def __init__(self, path: str | None = None, password: str | None = None):
         self.doc = self._open(path) if path else fitz.open()
         encrypted = bool(self.doc.needs_pass)
-        if encrypted and not (password and self.doc.authenticate(password)):
+        p = self.doc.xref_get_key(-1, "Encrypt/P")
+        # The file's own permission bits, re-applied on save; None if the file is not encrypted.
+        self._permissions = int(p[1]) if p[0] == "int" else None
+        auth = self.doc.authenticate(password) if password and self._permissions is not None else 0
+        if encrypted and not auth:
             raise PermissionError("password required or incorrect")
         self.path = path
         self._password = password if encrypted else None  # re-applied on save so protection is never silently dropped
+        is_owner = bool(auth & 4)                # authenticate() sets bit 4 for the owner password
+        # What this user may do: everything for an unencrypted file or the owner, else what the file allows.
+        self._allowed = -1 if self._permissions is None or is_owner else self._permissions
+        self._owner_pw = password if is_owner else secrets.token_urlsafe(24)   # used only if the file is encrypted
+        self.save_as_required = self.restricted   # for UIs: do not overwrite a restricted file as issued
         self.author = getpass.getuser()
         self._depth = 0
         self.generation = 0
@@ -541,10 +561,35 @@ class Document(SheetOps, PageOps):
         self.viewports: list = []
         self.unit_style, self.fraction = "decimal", 16
         self.columns: list = []   # custom Markups List columns: {"name", "type", "choices"}
-        self._undo: list[bytes] = []
-        self._redo: list[bytes] = []
+        self._joined: set[int] = set()   # journal steps that undo together with the step before them
+        self._merge = None               # (key, journal position, time) of the last step that a next one may join
         self.modified = False
         self.default_scale, self.page_scales = self._load_scales()
+        # A full rewrite (all save() can do) invalidates digital signatures, so callers warn before saving over the
+        # file. Set once at open: the signatures in the file on disk are what a save would break.
+        self.signed = self._has_signatures()
+
+    def _has_signatures(self) -> bool:
+        # SigFlags bit 2 (AppendOnly) is the signer's "saving other than incrementally breaks this" marker. Bit 1 alone
+        # only says a signature field exists, which may still be blank.
+        d = self.doc
+        flags = d.get_sigflags()   # -1: no form at all
+        if flags > 0 and flags & 2:
+            return True
+        # Otherwise walk the AcroForm field tree by xref, without loading pages: a signature field (/FT inherits down
+        # /Kids) with a value is signed.
+        todo = [(x, None) for x in _refs(d, *d.xref_get_key(d.pdf_catalog(), "AcroForm/Fields"))]
+        seen = set()
+        while todo:
+            xref, ft = todo.pop()
+            if xref in seen:   # a malformed tree can loop
+                continue
+            seen.add(xref)
+            ft = _xget(d, xref, "FT") or ft
+            if ft == "/Sig" and _xget(d, xref, "V"):
+                return True
+            todo += [(k, ft) for k in _refs(d, *d.xref_get_key(xref, "Kids"))]
+        return False
 
     @staticmethod
     def _open(path: str) -> fitz.Document:
@@ -584,63 +629,122 @@ class Document(SheetOps, PageOps):
         return fitz.Rect(r) * self._page(pno).rotation_matrix
 
     # --- undo / redo ---
-    MAX_UNDO = 30
+    MERGE_SECONDS = 2.0      # merged steps (spin box clicks): how long after one change the next may still join it
+    # MuPDF's journal records the old version of every object an operation changes, so an undo step costs memory in
+    # proportion to the change, not to the file. The journal starts with the first operation; after that, every change
+    # to self.doc must happen inside _operation, because MuPDF refuses changes outside one. Copy pages out of the
+    # document from _copy(), not from self.doc (see _journal.py).
 
-    def checkpoint(self):
+    @contextlib.contextmanager
+    def _operation(self, name="edit", merge=None):
+        """One undo step. Nested operations are part of the outer one. If the body raises, the document goes back to
+        exactly how it was, and markups fetched before are stale. A step with a `merge` key joins the step before it
+        when that step had the same key, came less than MERGE_SECONDS earlier, and nothing happened in between (one
+        undo then undoes both)."""
+        if self._depth:
+            yield
+            return
+        before, modified = self.doc.journal_position(), self.modified
         self.revision += 1
-        self._store_scales()
-        self._undo.append(self._dump())
-        del self._undo[:-self.MAX_UNDO]
-        self._redo = []
+        self._depth = 1
+        try:
+            with _journal.operation(self.doc, name):
+                yield
+                self._store_scales()
+        except BaseException:
+            self._journal_moved()
+            self.modified = modified
+            raise
+        finally:
+            self._depth = 0
         self.modified = True
+        after = self.doc.journal_position()
+        if after != before:                                  # the operation changed something: it is a new step
+            self._joined = {s for s in self._joined if s <= before[0]}     # MuPDF dropped the steps after `before`
+            now = time.monotonic()
+            if merge is not None and self._merge and self._merge[:2] == (merge, before) \
+                    and now - self._merge[2] < self.MERGE_SECONDS:
+                self._joined.add(after[0])
+            self._merge = (merge, after, now) if merge is not None else None
 
-    def _reopen(self, data: bytes):
+    def _journal_moved(self):
+        """After the journal undid or redid changes: page objects, PyMuPDF's metadata cache and the settings read
+        from the metadata are out of date."""
         self._invalidate_pages()
-        self.doc.close()
-        self.doc = fitz.open("pdf", data)
-        if self.doc.needs_pass:
-            self.doc.authenticate(self._password)
+        self.doc.init_doc()
         self.default_scale, self.page_scales = self._load_scales()
+        self._merge = None
+
+    @property
+    def undo_steps(self) -> int:
+        """How many times undo() can go back."""
+        pos = self.doc.journal_position()[0]
+        return pos - sum(1 for s in self._joined if s <= pos)
+
+    @property
+    def redo_steps(self) -> int:
+        """How many times redo() can go forward."""
+        pos, total = self.doc.journal_position()
+        return total - pos - sum(1 for s in self._joined if s > pos)
 
     def undo(self) -> bool:
-        if not self._undo:
+        pos = self.doc.journal_position()[0]
+        if not pos:
             return False
-        self._redo.append(self._snapshot())
-        self._reopen(self._undo.pop())
+        self.doc.journal_undo()
+        while pos in self._joined:          # this step was joined to the one before it
+            self.doc.journal_undo()
+            pos -= 1
+        self._journal_moved()
         self.modified = True
         return True
 
     def redo(self) -> bool:
-        if not self._redo:
+        pos, total = self.doc.journal_position()
+        if pos == total:
             return False
-        self._undo.append(self._snapshot())
-        self._reopen(self._redo.pop())
+        self.doc.journal_redo()
+        while pos + 2 in self._joined:      # the next step is joined to the one just redone
+            self.doc.journal_redo()
+            pos += 1
+        self._journal_moved()
         self.modified = True
         return True
+
+    def _copy(self) -> fitz.Document:
+        """A copy of the document to copy pages from (see _journal.py, item 4). Close it after use, for example with
+        `with self._copy() as copy:`."""
+        return _journal.copy(self.doc)
 
     def _snapshot(self) -> bytes:
         self._store_scales()
         return self._dump()
 
+    @property
+    def restricted(self) -> bool:
+        """True if the PDF forbids markups or changes and was not opened with its owner password."""
+        need = fitz.PDF_PERM_ANNOTATE | fitz.PDF_PERM_MODIFY
+        return self._allowed & need != need
+
     def _encryption_kwargs(self) -> dict:
-        """Arguments that protect a file written from this document, if the document was opened with a password.
+        """Arguments that protect a file written from this document the way the opened file was protected: the same
+        user password and permissions, and the owner password if the user gave it (else a random one).
         Every file that OpenRevu derives from a protected document (copies, extracts, reports) uses them."""
-        if not self._password:
+        if self._permissions is None:
             return {}
-        return dict(encryption=fitz.PDF_ENCRYPT_AES_256, user_pw=self._password, owner_pw=self._password + "-owner",
-                    permissions=-1)
+        return dict(encryption=fitz.PDF_ENCRYPT_AES_256, user_pw=self._password or "", owner_pw=self._owner_pw,
+                    permissions=self._permissions)
 
     def _dump(self) -> bytes:
-        """Serialize for the undo history; protected documents never leave plaintext copies in memory."""
-        if self._password:
-            return self.doc.tobytes(encryption=fitz.PDF_ENCRYPT_AES_256, user_pw=self._password,
-                                    owner_pw=self._password + "-owner", permissions=-1)
-        return self.doc.tobytes()
+        """Serialize for the undo history and autosave. Protected documents never leave plaintext copies in memory,
+        and a snapshot of an encrypted file stays encrypted so a recovered copy keeps its permissions."""
+        return self.doc.tobytes(**self._encryption_kwargs())
 
     # --- scales (default + per page), persisted in PDF keywords ---
     def _load_scales(self):
         self.viewports = []
         self.columns = []
+        self.unit_style, self.fraction = "decimal", 16      # undo can go back to before the settings were first stored
         default, pages = Scale(), {}
         seen = set()   # fingerprints of the /VP arrays already imported; None for settings older than this record
         kw = (self.doc.metadata or {}).get("keywords") or ""
@@ -729,7 +833,14 @@ class Document(SheetOps, PageOps):
         target.set_metadata(md)
 
     def _store_scales(self):
-        self._write_settings(self.doc)
+        """Write the settings into the document's keywords. Every operation ends with this, so undo restores them with
+        the rest, and outside an operation they are already stored."""
+        if not self._depth:
+            return
+        keywords = (self.doc.metadata or {}).get("keywords") or ""
+        stored = [p for p in keywords.split(";") if p.startswith(TAG + "-scale")]
+        if stored != [f"{TAG}-scales={json.dumps(self._settings_blob())}"]:   # an edit that changes nothing adds no step
+            self._write_settings(self.doc)
 
     @property
     def scale(self) -> Scale:
@@ -813,24 +924,24 @@ class Document(SheetOps, PageOps):
         r = fitz.Rect(rect).normalize()
         if r.is_empty:
             raise ValueError("viewport must have an area")
-        self.checkpoint()
-        self.viewports.append((pno, r, scale))
+        with self._operation("add viewport"):
+            self.viewports.append((pno, r, scale))
 
     def remove_viewport(self, index: int):
-        self.checkpoint()
-        del self.viewports[index]
+        with self._operation("remove viewport"):
+            del self.viewports[index]
 
     def set_scale(self, scale: Scale, page: int | None = None, pages=None, reset_pages: bool = False):
         """Set the default scale, or the scale of one page / a list of pages.
         reset_pages=True also clears every per-page override (apply to all pages)."""
-        self.checkpoint()
-        if reset_pages:
-            self.page_scales = {}
-        if pages is not None or page is not None:
-            for p in ([page] if pages is None else pages):
-                self.page_scales[p] = scale
-        else:
-            self.default_scale = scale
+        with self._operation("set scale"):
+            if reset_pages:
+                self.page_scales = {}
+            if pages is not None or page is not None:
+                for p in ([page] if pages is None else pages):
+                    self.page_scales[p] = scale
+            else:
+                self.default_scale = scale
 
     @property
     def page_count(self) -> int:
@@ -1226,15 +1337,10 @@ class Document(SheetOps, PageOps):
                 with contextlib.suppress(OSError):
                     os.remove(tmp)
                 raise
-            reopened = self._open(path)  # before closing the old one, so a failure leaves the document usable
-            self._invalidate_pages()
-            self.doc.close()
-            self.doc = reopened
-            if self.doc.needs_pass and not self.doc.authenticate(self._password or kw.get("user_pw", "")):
-                raise PermissionError("saved file is encrypted; reopen with its password")
         else:
             self.doc.save(path, **kw)
             self.path = path
+            self.save_as_required = False   # the new file is the user's own copy
         self.modified = False
 
 

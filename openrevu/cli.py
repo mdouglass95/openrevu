@@ -3,13 +3,24 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from .core import Document
 from .pages import compare_pdfs
 
 
 def _doc(a):
-    return Document(a.input, a.in_password)
+    d = Document(a.input, a.in_password)
+    if d.signed and _same_file(a.input, a.output):
+        print(f"warning: {a.input} is digitally signed; overwriting it invalidates the signatures", file=sys.stderr)
+    return d
+
+
+def _same_file(a, b) -> bool:
+    try:
+        return Path(a).samefile(b)
+    except OSError:   # b does not exist yet
+        return False
 
 
 def main(argv=None) -> int:
@@ -90,7 +101,8 @@ def main(argv=None) -> int:
         elif a.cmd == "run":
             with open(a.script) as fh:
                 code = compile(fh.read(), a.script, "exec")
-            exec(code, {"doc": d, "__name__": "__openrevu_script__"})  # noqa: S102 - user's own script, by design
+            with d._operation("script"):     # so that the script may also change doc.doc (the PyMuPDF document)
+                exec(code, {"doc": d, "__name__": "__openrevu_script__"})  # noqa: S102 - user's own script, by design
             d.save(a.output)
         elif a.cmd == "sheets":
             print(f"{d.auto_bookmarks()} bookmarks, {d.auto_hyperlinks()} links"); d.save(a.output)

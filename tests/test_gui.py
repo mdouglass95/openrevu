@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import fitz
@@ -7,6 +8,7 @@ import pytest
 pytest.importorskip("PyQt5")
 from PyQt5 import QtCore, QtGui, QtTest, QtWidgets
 
+from openrevu.core import Document
 from openrevu.gui import Main, parse_pages
 
 
@@ -262,6 +264,19 @@ def test_properties_toolbar_edits_selection_or_defaults(win):
     w.set_tool("Rectangle"); w._set_fill((1.0, 1.0, 0.0)); drag(w, 0, (300, 150), (380, 220))
     filled = [x for x in w.doc.markups() if x.annot.colors.get("fill")]
     assert len(filled) == 1 and tuple(filled[0].annot.colors["fill"]) == (1.0, 1.0, 0.0)
+
+
+def test_ten_clicks_on_the_width_spin_box_are_one_undo_step(win):
+    w = win
+    w.set_tool("Rectangle"); drag(w, 0, (100, 150), (200, 220))
+    m = w.doc.markups()[0]; w.cv.select(m)
+    before, steps = m.annot.border["width"], w.doc.undo_steps
+    for _ in range(10):
+        w.w_width.stepUp()
+    assert w.doc.markups()[0].annot.border["width"] == before + 10 * w.w_width.singleStep()
+    assert w.doc.undo_steps == steps + 1
+    w.undo()
+    assert w.doc.markups()[0].annot.border["width"] == before and w.doc.undo_steps == steps
 
 
 def test_context_menu_actions(win, monkeypatch):
@@ -635,15 +650,15 @@ def test_custom_numbers_round_trip_and_losing_focus_changes_nothing(win):
     assert w.doc.markups()[0].custom()["Qty"] == 1234567.0 and ed.text() == "1234567"
     w._load_props()
     assert ed.text() == "1234567"                                           # not 1.23457e+06
-    steps, modified = len(w.doc._undo), w.doc.modified
+    steps, modified = w.doc.undo_steps, w.doc.modified
     for _ in range(3):
         ed.editingFinished.emit()                                           # focus out with no change
     assert w.doc.markups()[0].custom()["Qty"] == 1234567.0                  # the value is exact
-    assert len(w.doc._undo) == steps and w.doc.modified == modified         # and no undo step was added
+    assert w.doc.undo_steps == steps and w.doc.modified == modified         # and no undo step was added
     row = [w.mk_table.item(0, c).text() for c in range(w.mk_table.columnCount())]
     assert row[-1] == "1234567"
     ed.setText("1234568"); ed.editingFinished.emit()
-    assert w.doc.markups()[0].custom()["Qty"] == 1234568.0 and len(w.doc._undo) == steps + 1
+    assert w.doc.markups()[0].custom()["Qty"] == 1234568.0 and w.doc.undo_steps == steps + 1
 
 
 # ---------- third-review regressions: straight drags ----------
@@ -673,3 +688,109 @@ def test_a_narrow_drag_places_stamps_and_signatures_like_a_click(win):
     w.set_tool("Stamp"); drag(w, 0, (100, 150), (100, 320))
     w.set_tool("Signature"); drag(w, 0, (300, 150), (300, 320))
     assert sorted(m.subject for m in w.doc.markups()) == ["Signature", "Stamp"]
+
+
+@pytest.fixture
+def signed_win(app, signed_pdf):
+    w = Main(signed_pdf); w.show()
+    app.processEvents()
+    return w
+
+
+def answer_with(monkeypatch, label):
+    """Answer the next custom QMessageBox with the button called `label`; return what the box showed."""
+    seen = {"asked": 0}
+
+    def exec_(self):
+        seen["asked"] += 1
+        seen.update(text=self.text(), default=self.defaultButton().text())
+        self._clicked = next(b for b in self.buttons() if b.text() == label)
+        return 0
+    monkeypatch.setattr(QtWidgets.QMessageBox, "exec_", exec_)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "clickedButton", lambda self: getattr(self, "_clicked", None))
+    return seen
+
+
+def test_opening_a_signed_pdf_says_saving_breaks_the_signatures(signed_win):
+    assert "digitally signed" in signed_win.statusBar().currentMessage()
+
+
+def test_saving_a_signed_pdf_in_place_asks_first_and_defaults_to_save_as(signed_win, signed_pdf, monkeypatch, tmp_path):
+    w = signed_win
+    original = Path(signed_pdf).read_bytes()
+    w.doc.add_rect(0, fitz.Rect(100, 100, 200, 200))
+
+    seen = answer_with(monkeypatch, "Cancel")
+    w.save()
+    assert seen["asked"] == 1 and "signatures" in seen["text"]
+    assert seen["default"] == "Save As…"
+    assert Path(signed_pdf).read_bytes() == original and w.doc.modified
+
+    answer_with(monkeypatch, "Save As…")
+    copy = str(tmp_path / "marked-up.pdf")
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (copy, "")))
+    w.save()
+    assert Path(signed_pdf).read_bytes() == original
+    assert w.doc.path == copy and len(Document(copy).markups()) == 1
+
+
+def test_save_anyway_overwrites_a_signed_pdf_and_asks_only_once(signed_win, signed_pdf, monkeypatch):
+    w = signed_win
+    w.doc.add_rect(0, fitz.Rect(100, 100, 200, 200))
+    seen = answer_with(monkeypatch, "Save anyway")
+    w.save()
+    assert seen["asked"] == 1 and len(Document(signed_pdf).markups()) == 1
+    assert w.doc.signed          # the in-place save reopened the file; it still holds the (now broken) signatures
+
+    w.doc.add_rect(0, fitz.Rect(300, 300, 400, 400))
+    w.save()
+    assert seen["asked"] == 1 and len(Document(signed_pdf).markups()) == 2
+
+
+def test_after_save_as_a_signed_pdf_saves_to_the_copy_without_asking(signed_win, signed_pdf, monkeypatch, tmp_path):
+    w = signed_win
+    original = Path(signed_pdf).read_bytes()
+    copy = str(tmp_path / "copy.pdf")
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (copy, "")))
+    w.save_as()
+    seen = answer_with(monkeypatch, "Cancel")
+    w.doc.add_rect(0, fitz.Rect(100, 100, 200, 200))
+    w.save()
+    assert seen["asked"] == 0 and len(Document(copy).markups()) == 1
+    assert Path(signed_pdf).read_bytes() == original
+
+
+def test_save_as_from_the_close_question_renames_no_other_tab(signed_win, monkeypatch, tmp_path):
+    w = signed_win
+    other = tmp_path / "other.pdf"
+    d = fitz.open(); d.new_page(); d.save(other)
+    w.open(str(other))                                  # the signed tab is now in the background
+    w.tabs.widget(0).doc.add_rect(0, fitz.Rect(100, 100, 200, 200))
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(lambda *a, **k: QtWidgets.QMessageBox.Save))
+    answer_with(monkeypatch, "Save As…")
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(tmp_path / "copy.pdf"), "")))
+    w.close_tab(0)
+    assert [w.tabs.tabText(i) for i in range(w.tabs.count())] == ["other.pdf"]
+
+
+def test_a_recovered_signed_pdf_does_not_offer_its_signed_original_as_the_file_name(signed_win, signed_pdf, monkeypatch, tmp_path):
+    w = signed_win
+    w.doc.path, w.doc.suggested_path = None, signed_pdf   # what offer_recovery sets up
+    asked = {}
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName",
+                        staticmethod(lambda parent, title, start, *a: asked.update(start=start) or ("", "")))
+    w.save()
+    assert asked["start"] != signed_pdf
+
+
+def test_a_signed_pdf_that_must_be_saved_as_a_copy_skips_the_signed_question(signed_win, signed_pdf, monkeypatch, tmp_path):
+    w = signed_win
+    w.doc.save_as_required = True                       # what a restricted PDF sets on open
+    original = Path(signed_pdf).read_bytes()
+    w.doc.add_rect(0, fitz.Rect(100, 100, 200, 200))
+    seen = answer_with(monkeypatch, "Save anyway")      # "Save anyway" would overwrite a file that must stay as issued
+    copy = str(tmp_path / "copy.pdf")
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (copy, "")))
+    w.save()
+    assert seen["asked"] == 0 and Path(signed_pdf).read_bytes() == original
+    assert w.doc.path == copy and len(Document(copy).markups()) == 1
