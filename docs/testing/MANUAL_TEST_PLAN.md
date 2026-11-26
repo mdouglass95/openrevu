@@ -205,6 +205,8 @@ Expect the status bar to show `Scale: 1 in = 8 ft (viewports on page)`. Measure 
 right: it must use 1 in = 4 ft. Compare the Markups List and the **Measurements** tab with `RevuTest.csv` in the same folder: the four
 Length Measurements (60', 30', 4', 1'-8"), the two Polylength Measurements (108'-3 1/2", 36'-1"), the Area Measurement (471.48 sq ft)
 and one Count Measurement of 7 must match. Change the page scale, save, close and open the file again: your scale must stay.
+Resize the 60' length a little: its value must stay near 60', because it keeps its own Revu scale. Then calibrate the
+saved file again in Revu at a new scale and open it in OpenRevu: expect the new Revu scale.
 
 **T29 Resize a measurement.** Select an area and drag its corner handle. Expect the label and value to change. Resize an angle.
 A **Count** marker must refuse to resize and say why.

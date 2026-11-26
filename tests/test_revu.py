@@ -119,3 +119,52 @@ def test_broken_revu_structures_are_ignored(tmp_path):
     ms = {m.xref: m for m in doc.markups()}
     assert ms[52].measurement()[1] == pytest.approx(60, rel=1e-3)        # falls back to the page scale
     assert ms[127].measurement()[1] == pytest.approx(10 / 3, rel=1e-3)   # same 30 pt line at 1/8" instead of 1/4"
+
+
+def test_pdf_object_reader_reads_references_only_when_asked():
+    from openrevu.pdfobject import Reader, Ref
+    src = b"<</Measure 12 0 R /BBox [0 0 2.5 4] /U (')>>"
+    assert Reader(src, refs=True).parse() == {"Measure": Ref(12), "BBox": [0, 0, 2.5, 4], "U": "'"}
+    assert Reader(src).parse()["Measure"] is None     # the Bluebeam tool set importer ignores references
+
+
+def _set_revu_page_scale(path, ft_per_pt):
+    """Give page 0 a Revu-style page-scale /VP, as Revu writes when the sheet is calibrated there."""
+    import pymupdf as fitz
+    d = fitz.open(path)
+    w, h = d[0].rect.width, d[0].rect.height
+    d.xref_set_key(d.page_xref(0), "VP",
+                   f"[<</Type/Viewport/BBox[0 0 {w:g} {h:g}]/Measure<</Type/Measure/Subtype/RL/X[<</U(')/C {ft_per_pt!r}>>]>>>>]")
+    d.save(path, incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
+
+
+def test_revu_calibration_after_an_openrevu_save_is_read(tmp_path):
+    # the file was saved by OpenRevu before it had any /VP, then calibrated in Revu
+    import pymupdf as fitz
+    plain = tmp_path / "plain.pdf"
+    d = fitz.open(SAMPLE)
+    d.xref_set_key(d.page_xref(0), "VP", "null")
+    d.save(plain)
+    out = tmp_path / "openrevu.pdf"
+    Document(str(plain)).save(str(out))
+    _set_revu_page_scale(out, QUARTER_INCH)
+    assert Document(str(out)).scale_for(0).unit_per_pt == pytest.approx(QUARTER_INCH, rel=1e-3)
+
+
+def test_revu_recalibration_after_an_openrevu_save_is_read(revu, tmp_path):
+    # OpenRevu took in the Revu page scale (1/8") and saved; then the sheet was calibrated again in Revu at 1/4"
+    out = tmp_path / "openrevu.pdf"
+    revu.save(str(out))
+    _set_revu_page_scale(out, QUARTER_INCH)
+    assert Document(str(out)).scale_for(0).unit_per_pt == pytest.approx(QUARTER_INCH, rel=1e-3)
+
+
+def test_resized_revu_length_keeps_its_own_scale(revu):
+    # the Revu 60'-0" length (xref 52) carries its own 1/8" /Measure; the page scale is changed in OpenRevu to 1:10 ft
+    revu.set_scale(Scale.from_ratio(1, 10, "ft"), reset_pages=True)
+    line = next(m for m in revu.markups() if m.xref == 52)
+    r = line.rect
+    line.resize((r.x0, r.y0, r.x1 + 9, r.y1))   # 9 pt longer, along the line
+    kind, value, unit = next(m for m in revu.markups() if m.xref == 52).measurement()
+    assert (kind, unit) == ("length", "ft")
+    assert value == pytest.approx(61, rel=1e-3)       # 60 ft + 9 pt at 1/8" (1 ft); at 1:10 it would be 76.25 ft

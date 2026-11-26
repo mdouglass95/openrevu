@@ -5,6 +5,7 @@ import base64
 import contextlib
 import csv
 import getpass
+import hashlib
 import json
 import math
 import os
@@ -32,9 +33,6 @@ RECREATABLE_KINDS = {"Square", "Circle", "Line", "PolyLine", "Polygon", "Ink", "
 RESIZABLE_MEASURES = {"length", "perimeter", "area", "volume", "diameter", "angle"}
 MEASURE_KINDS = RESIZABLE_MEASURES | {"count"}
 MEASURE_UNITS = set(UNITS) | {"deg", "ea"}  # deg for angles, ea for counts
-# (annotation type, /IT intent) of the standard measurement annotations (ISO 32000-1 §12.5.6; /PolygonCount is Revu's)
-PDF_INTENTS = {("Line", "/LineDimension"): "length", ("PolyLine", "/PolyLineDimension"): "length",
-               ("Polygon", "/PolygonDimension"): "area", ("Polygon", "/PolygonCount"): "count"}
 
 
 @dataclass
@@ -163,6 +161,14 @@ def _same_rect(a, b, tol=0.5) -> bool:
     return all(abs(x - y) <= tol for x, y in zip(a, b))
 
 
+def _pdf_scale(m):
+    """The Scale of a (unit, factor) pair read by pdfmeasure, or None if OpenRevu cannot use it."""
+    try:
+        return Scale(*m) if m else None
+    except ValueError:
+        return None
+
+
 def _xget(doc, xref, key):
     t, v = doc.xref_get_key(xref, key)
     return None if t == "null" else v
@@ -234,16 +240,23 @@ class Markup:
         """A measurement made in Revu or Acrobat: its /IT intent gives the kind, its /Measure dictionary the scale
         (else the viewport or page scale at its position), and the value is computed from its geometry."""
         doc = self.d.doc
-        kind = PDF_INTENTS.get((self.kind, _xget(doc, self.xref, "IT")))
+        kind = pdfmeasure.intent(doc, self.xref, self.kind)
+        if kind is None:
+            return None
         if kind == "count":   # Revu groups the marks of one count: the others are /RT /Group replies to this one
             marks = sum(1 for a in self._page.annots() or []
                         if _xget(doc, a.xref, "IRT") == f"{self.xref} 0 R" and _xget(doc, a.xref, "RT") == "/Group")
             return "count", float(1 + marks), "ea"
-        pts = self.points() if kind else []
+        pts = self.points()
         if len(pts) < 2:
             return None
-        sc = pdfmeasure.measure_scale(doc, pdfmeasure.key(doc, self.xref, "Measure")) or self.d.scale_at(self.page_no, pts)
+        sc = self._scale_at(pts)
         return kind, (sc.area(pts) if kind == "area" else sc.length(pts)), sc.unit
+
+    def _scale_at(self, pts) -> Scale:
+        """The scale of this markup: its own /Measure dictionary (Revu, Acrobat), else the scale at its points."""
+        doc = self.d.doc
+        return _pdf_scale(pdfmeasure.measure(doc, pdfmeasure.key(doc, self.xref, "Measure"))) or self.d.scale_at(self.page_no, pts)
 
     def custom(self) -> dict:
         """Values of the custom columns that are set on this markup."""
@@ -407,17 +420,17 @@ class Markup:
 
     def _remeasure(self, kind):
         """Compute the value again from the geometry (after a resize), store it with the unit of the scale that was
-        used, and redraw the label. The scale is looked up in the same way as when the measurement was made."""
-        d, pno = self.d, self.page_no
+        used, and redraw the label. The scale is looked up in the same way as when the measurement was made (see _scale_at)."""
+        d = self.d
         if self.kind == "Circle":
             l, t, r_, b_ = self._rd()
             vr = self.rect
             w, h = vr.width - l - r_, vr.height - t - b_
-            sc = d.scale_at(pno, [vr.tl, vr.br])
+            sc = self._scale_at([vr.tl, vr.br])
             val = sc.unit_per_pt * w if kind == "diameter" else 3.141592653589793 / 4 * w * h * sc.unit_per_pt ** 2
         else:
             pts = self.points()
-            sc = d.scale_at(pno, pts)
+            sc = self._scale_at(pts)
             if kind == "length":
                 val = sc.length(pts)
             elif kind == "perimeter":
@@ -628,7 +641,8 @@ class Document(SheetOps, PageOps):
     def _load_scales(self):
         self.viewports = []
         self.columns = []
-        default, pages, imported = Scale(), {}, False
+        default, pages = Scale(), {}
+        seen = set()   # fingerprints of the /VP arrays already imported; None for settings older than this record
         kw = (self.doc.metadata or {}).get("keywords") or ""
         for part in kw.split(";"):
             if part.startswith(TAG + "-scales="):
@@ -640,37 +654,59 @@ class Document(SheetOps, PageOps):
                     self.viewports = viewports
                     self.unit_style, self.fraction = d.get("style", "decimal"), int(d.get("fraction", 16))
                     self.columns = list(d.get("columns", []))
-                    imported = bool(d.get("vp"))
+                    prior = d.get("vp")
+                    seen = set(prior) if isinstance(prior, list) else None
                 except (ValueError, KeyError, TypeError):
-                    default, pages = Scale(), {}
+                    default, pages, seen = Scale(), {}, None
                 break
-        if not imported:
-            self._import_pdf_viewports(pages)
+        self._import_pdf_viewports(pages, seen)
         return default, pages
 
-    def _import_pdf_viewports(self, pages: dict):
-        """Take the page scales and viewports of the standard /VP arrays (Revu, Acrobat). Settings that OpenRevu already
-        stored win. This runs once per file: the stored settings record that it ran, so a scale the user changed
-        afterwards is not overwritten on the next open."""
-        doc = self.doc
-        for pno in range(len(doc)):
-            if doc.xref_get_key(doc.page_xref(pno), "VP")[0] == "null":
-                continue
-            vps = pdfmeasure.page_viewports(doc, pno)
+    def _import_pdf_viewports(self, pages: dict, seen):
+        """Take the page scales and viewports of the standard /VP arrays (Revu, Acrobat) into `pages` and
+        self.viewports. The stored settings keep a fingerprint of each /VP they have taken in (`seen`), so a /VP is
+        imported once: a scale the user changes in OpenRevu afterwards stays. A /VP that is new or changed since
+        (calibrated in Revu after OpenRevu saved the file) is newer than the stored settings, and wins over them.
+        For settings saved before fingerprints were kept (`seen` is None), the stored settings win."""
+        self._vp_seen = set()
+        for pno in range(len(self.doc)):
+            vps = pdfmeasure.page_viewports(self.doc, pno)
             if not vps:
                 continue
-            page = doc[pno]
-            cb, mh = page.cropbox, page.mediabox.height
-            whole = fitz.Rect(0, 0, page.rect.width, page.rect.height)
-            for bbox, sc in vps:
-                # PDF user space (y up) -> PyMuPDF unrotated space (y down, CropBox origin) -> visual space
-                u = fitz.Rect(bbox.x0 - cb.x0, mh - bbox.y1 - cb.y0, bbox.x1 - cb.x0, mh - bbox.y0 - cb.y0)
-                r = (u * page.rotation_matrix).normalize()
-                # Revu marks the page scale with a viewport the size of the visual page at the origin
-                if r.contains(page.rect) or _same_rect(bbox, whole):
-                    pages.setdefault(pno, sc)
-                elif not any(p == pno and _same_rect(r, r2) for p, r2, _ in self.viewports):
+            fp = hashlib.sha1(repr(vps).encode()).hexdigest()[:16]
+            self._vp_seen.add(fp)
+            if seen is not None and fp in seen:
+                continue
+            newer = seen is not None
+            page_scale, rects = self._pdf_viewports(pno, vps)
+            if page_scale and (newer or pno not in pages):
+                pages[pno] = page_scale
+            for r, sc in rects:
+                i = next((i for i, (p, r2, _) in enumerate(self.viewports) if p == pno and _same_rect(r, r2)), None)
+                if i is None:
                     self.viewports.append((pno, r, sc))
+                elif newer:
+                    self.viewports[i] = (pno, r, sc)
+
+    def _pdf_viewports(self, pno: int, vps):
+        """(page scale or None, [(visual rect, scale)]) of the /VP viewports `vps` of one page."""
+        page_scale, rects = None, []
+        page = self._page(pno)
+        cb, mh = page.cropbox, page.mediabox.height
+        whole = fitz.Rect(0, 0, page.rect.width, page.rect.height)
+        for bbox, m in vps:
+            sc = _pdf_scale(m)
+            if sc is None:
+                continue
+            # PDF user space (y up) -> PyMuPDF unrotated space (y down, CropBox origin) -> visual space
+            u = fitz.Rect(bbox.x0 - cb.x0, mh - bbox.y1 - cb.y0, bbox.x1 - cb.x0, mh - bbox.y0 - cb.y0)
+            r = self._rv(pno, u).normalize()
+            # Revu marks the page scale with a viewport the size of the visual page at the origin
+            if r.contains(page.rect) or _same_rect(bbox, whole):
+                page_scale = page_scale or sc
+            else:
+                rects.append((r, sc))
+        return page_scale, rects
 
     def _settings_blob(self, pages=None) -> dict:
         """The document settings that are stored in the PDF. With `pages` (a list of page indexes), only those pages
@@ -682,7 +718,7 @@ class Document(SheetOps, PageOps):
                 "viewports": [{"page": remap(p), "rect": list(r), "scale": sc.to_dict()} for p, r, sc in self.viewports
                               if keep is None or p in keep],
                 "style": self.unit_style, "fraction": self.fraction, "columns": self.columns,
-                "vp": True}  # the /VP scales were imported (see _import_pdf_viewports)
+                "vp": sorted(self._vp_seen)}  # the /VP arrays already imported (see _import_pdf_viewports)
 
     def _write_settings(self, target: fitz.Document, pages=None):
         """Store the settings in the keywords of `target` (this document, or a new file made from some of its pages)."""
