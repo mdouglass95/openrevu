@@ -2,7 +2,15 @@
 
 While a document has unsaved changes, OpenRevu keeps a snapshot of it in the recovery folder.
 A snapshot is removed when the document is saved or closed. After a crash the snapshots stay,
-and the next start offers to restore them. A snapshot of a password-protected document is encrypted."""
+and the next start offers to restore them. A snapshot of a password-protected document is encrypted.
+
+Cost on the GUI thread. The autosave tick serializes the document there (Document._snapshot, a full tobytes), because
+PyMuPDF is not thread-safe; write_later() hands the bytes to a worker thread. On a 250 MB test file (50 pages of
+incompressible images) tobytes takes about 260 ms, the rest of the tick under 1 ms; the file write it no longer waits
+for took 250 to 650 ms. A protected document is much slower: MuPDF encrypts while it serializes, about 11 s for the
+same file. MuPDF's undo journal (doc.journal_save) is no cheaper replacement: it holds the old versions of changed
+objects, keyed to the fingerprint of the file as last written, so it cannot rebuild the current state without a full
+write of the document as well, and it does not work for documents that exist only in memory."""
 from __future__ import annotations
 
 import concurrent.futures
