@@ -12,7 +12,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets as W
 
 from . import __version__
 from .canvas import Canvas
-from .core import STATUSES, Document
+from .core import STATUSES, Document, FileChangedError
 from .gui_ops import ERRORS, DocumentOps, parse_pages  # noqa: F401  (parse_pages re-exported)
 from .icons import tool_icon
 from . import recovery
@@ -989,6 +989,19 @@ class Main(DocumentOps, W.QMainWindow):
         box.exec_()
         return {save_as: "save_as", anyway: "anyway"}.get(box.clickedButton(), "cancel")
 
+    def _ask_file_changed(self) -> str:
+        """Another program changed the file since it was opened or saved. Returns 'overwrite', 'save_as' or 'cancel'."""
+        box = W.QMessageBox(self)
+        box.setWindowTitle("File changed on disk")
+        box.setIcon(W.QMessageBox.Warning)
+        box.setText("The file was changed by another program since you opened it. Overwriting it loses those changes.")
+        overwrite = box.addButton("Overwrite", W.QMessageBox.DestructiveRole)
+        save_as = box.addButton("Save As…", W.QMessageBox.AcceptRole)
+        box.addButton("Cancel", W.QMessageBox.RejectRole)
+        box.setDefaultButton(save_as)
+        box.exec_()
+        return {overwrite: "overwrite", save_as: "save_as"}.get(box.clickedButton(), "cancel")
+
     def _save(self, d: Document) -> bool:
         in_place = bool(d.path) and not d.save_as_required
         if in_place and d.signed and d.recovery_id not in self._rewritten:
@@ -998,15 +1011,23 @@ class Main(DocumentOps, W.QMainWindow):
             in_place = choice == "anyway"
         try:
             if in_place:
-                d.save()
-            else:
+                try:
+                    d.save()
+                except FileChangedError:
+                    choice = self._ask_file_changed()
+                    if choice == "cancel":
+                        return False
+                    in_place = choice == "overwrite"
+                    if in_place:
+                        d.save(force=True)
+            if not in_place:
                 title = "Save a copy (this PDF restricts editing)" if d.restricted else "Save"
                 # a signed document's suggested path is its signed original: overwriting it is what the warning is about
                 start = "" if d.signed else getattr(d, "suggested_path", None) or ""
                 p, _ = W.QFileDialog.getSaveFileName(self, title, start, "PDF (*.pdf)")
                 if not p:
                     return False
-                d.save(p)
+                d.save(p, force=True)   # the file dialog already asked whether to replace an existing file
                 tab = next(i for i in range(self.tabs.count()) if getattr(self.tabs.widget(i), "doc", None) is d)
                 self.tabs.setTabText(tab, os.path.basename(p))   # closing a background tab saves a doc that is not current
                 self.prefs.add_recent(p)
@@ -1034,7 +1055,8 @@ class Main(DocumentOps, W.QMainWindow):
             p, _ = W.QFileDialog.getSaveFileName(self, "Save As", "", "PDF (*.pdf)")
             if p:
                 self.cv.select(None)
-                if self._run(self.doc.save, p, msg=f"Saved {p}"):
+                # force: the file dialog already asked whether to replace an existing file, even this document's own
+                if self._run(self.doc.save, p, force=True, msg=f"Saved {p}"):
                     self._saved(self.doc)
                     self.tabs.setTabText(self.tabs.currentIndex(), os.path.basename(p))
                     self.prefs.add_recent(p)

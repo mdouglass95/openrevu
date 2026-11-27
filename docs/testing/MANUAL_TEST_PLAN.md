@@ -334,6 +334,15 @@ Save as `restricted_copy.pdf`. The original `restricted.pdf` must be unchanged. 
 `restricted_copy.pdf` without asking again. Open `restricted_copy.pdf` in a different PDF viewer and look at its security
 properties: it is still encrypted and still allows printing only.
 
+**T52 File changed by another program.** Copy `plan_v1.pdf` to `shared.pdf` and open `shared.pdf`. Add a markup. In a
+different PDF editor, change `shared.pdf` (add a comment or a page) and save it there. Back in OpenRevu, press Ctrl+S.
+Expect a warning: "The file was changed by another program since you opened it." with **Overwrite**, **Save As…** (the
+default) and **Cancel**. **Cancel**: nothing is saved, and the tab still shows unsaved changes. **Save As…**: a file dialog
+opens; the copy gets your markup, and `shared.pdf` keeps the other editor's change. Open `shared.pdf` again, add a markup,
+change the file in the other editor once more, press Ctrl+S and choose **Overwrite**: the file now has your markup and not
+the other editor's change. Add another markup and press Ctrl+S: it saves without asking. Close the tab with unsaved changes
+after another outside change, choose **Save**, then **Cancel** in the warning: the tab stays open.
+
 ### H. Visual and feel (look at the whole window)
 
 Answer these as a person would. Write a sentence for each.
