@@ -1398,20 +1398,23 @@ class Document(SheetOps, PageOps):
                 markup._page.delete_annot(a)
         markup._page.delete_annot(markup.annot)
 
-    def takeoff(self):
-        """{(kind, unit): total} over all measurement markups."""
+    def measured(self):
+        """[(markup, measurement or None)] for every markup. measurement() can be costly (a Revu markup is parsed
+        from its /Measure dictionary each time), so callers that need both lists and totals compute it once here."""
+        return [(m, m.measurement()) for m in self.markups()]
+
+    def takeoff(self, measured=None):
+        """{(kind, unit): total} over all measurement markups. `measured`: a result of measured(), to reuse."""
         totals: dict = {}
-        for m in self.markups():
-            r = m.measurement()
+        for m, r in self.measured() if measured is None else measured:
             if r:
                 totals[(r[0], r[2])] = totals.get((r[0], r[2]), 0.0) + r[1]
         return totals
 
-    def takeoff_by_subject(self):
-        """{(subject, kind, unit): (count_of_items, total)} — a measurement summary."""
+    def takeoff_by_subject(self, measured=None):
+        """{(subject, kind, unit): (count_of_items, total)} — a measurement summary. `measured`: as in takeoff()."""
         out: dict = {}
-        for m in self.markups():
-            r = m.measurement()
+        for m, r in self.measured() if measured is None else measured:
             if r:
                 n, t = out.get((m.subject, r[0], r[2]), (0, 0.0))
                 out[(m.subject, r[0], r[2])] = (n + 1, t + r[1])

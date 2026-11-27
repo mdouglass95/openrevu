@@ -1237,11 +1237,11 @@ class Main(DocumentOps, W.QMainWindow):
         t.setHorizontalHeaderLabels(["Page", "Subject", "Type", "Author", "Status", "Comment", "Value"] + [c["name"] for c in cols])
         if d:
             q, st = self.mk_filter.text().lower(), self.mk_status.currentIndex()
-            for m in d.markups():
+            measured = d.measured()
+            for m, r in measured:
                 status = m.status
                 if st and STATUSES[st - 1] != status:
                     continue
-                r = m.measurement()
                 val = d.fmt(*r) if r else ""
                 cv = m.custom()
                 row = [str(m.page_no + 1), m.subject, m.kind, m.author, status, m.comment, val] \
@@ -1258,7 +1258,7 @@ class Main(DocumentOps, W.QMainWindow):
                         it.setData(QtCore.Qt.DisplayRole, int(txt))
                     t.setItem(i, c, it)
                 self._rows.append(m)
-            for k, ((subj, kind, unit), (n, tot)) in enumerate(sorted(d.takeoff_by_subject().items())):
+            for k, ((subj, kind, unit), (n, tot)) in enumerate(sorted(d.takeoff_by_subject(measured).items())):
                 self.meas_table.insertRow(k)
                 for c, v in enumerate((subj, str(n), d.fmt(kind, tot, unit).split(" ")[0], {"area": f"{unit}²", "volume": f"{unit}³"}.get(kind, unit))):
                     self.meas_table.setItem(k, c, W.QTableWidgetItem(v))
@@ -1269,7 +1269,7 @@ class Main(DocumentOps, W.QMainWindow):
             self._mk_widths_set = True
         self._rebuild_custom_fields()
         if d:
-            lines = [f"{k.title()}: {d.fmt(k, v, u)}" for (k, u), v in sorted(d.takeoff().items())]
+            lines = [f"{k.title()}: {d.fmt(k, v, u)}" for (k, u), v in sorted(d.takeoff(measured).items())]
             self.totals.setText("Totals — " + ("; ".join(lines) if lines else "no measurements yet"))
         else:
             self.totals.setText("")
@@ -1440,7 +1440,8 @@ class Main(DocumentOps, W.QMainWindow):
         self.p_replies.clear()
         if m is not None:
             try:
-                self.p_info.setText(f"{m.kind} on page {m.page_no + 1}" + (f"\n{self.doc.fmt(*m.measurement())}" if m.measurement() else ""))
+                r = m.measurement()
+                self.p_info.setText(f"{m.kind} on page {m.page_no + 1}" + (f"\n{self.doc.fmt(*r)}" if r else ""))
                 self.p_subject.setText(m.subject)
                 self.p_comment.setPlainText(m.comment)
                 self.p_status.setCurrentIndex(STATUSES.index(m.status) if m.status in STATUSES else 0)
