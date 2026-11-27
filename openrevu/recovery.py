@@ -86,12 +86,10 @@ _pending: dict[str, concurrent.futures.Future] = {}     # document id -> its lat
 
 
 def write_later(doc_id: str, data: bytes, original_path: str | None, title: str, encrypted: bool) -> concurrent.futures.Future:
-    """Queue write() on the worker thread and return its Future. The Future raises what write() raised."""
-    def job():
-        write(doc_id, data, original_path, title, encrypted)    # looked up at run time, so tests can replace write()
-
-    with _lock:
-        fut = _pending[doc_id] = _writer.submit(job)
+    """Queue write() on the worker thread and return its Future. The Future raises what write() raised.
+    Its done-callbacks run on the worker thread (or, for a write that remove() cancels, on the caller's)."""
+    with _lock:      # write is looked up when the job runs, so tests can replace it
+        fut = _pending[doc_id] = _writer.submit(lambda: write(doc_id, data, original_path, title, encrypted))
 
     def forget(f):
         with _lock:
@@ -101,11 +99,10 @@ def write_later(doc_id: str, data: bytes, original_path: str | None, title: str,
     return fut
 
 
-def wait(doc_id: str | None = None) -> None:
-    """Block until the queued writes (of one document, or of all) have finished."""
-    with _lock:
-        futs = list(_pending.values()) if doc_id is None else [f for f in (_pending.get(doc_id),) if f]
-    concurrent.futures.wait(futs)
+def wait() -> None:
+    """Block until every queued write has finished and its done-callbacks have run. The worker runs the callbacks
+    of a job before it starts the next one, so an empty job queued last is enough."""
+    _writer.submit(lambda: None).result()
 
 
 def remove(doc_id: str) -> None:

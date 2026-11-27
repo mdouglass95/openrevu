@@ -171,7 +171,7 @@ class StartPage(W.QWidget):
 
 
 class Main(DocumentOps, W.QMainWindow):
-    _autosave_done = QtCore.pyqtSignal()    # emitted on the writer thread when a background snapshot write ends
+    _autosave_done = QtCore.pyqtSignal(str, object, object)   # from the writer thread: id, revision (None: cancelled), error
 
     def __init__(self, path=None, prefs=None):
         super().__init__()
@@ -209,10 +209,11 @@ class Main(DocumentOps, W.QMainWindow):
         self._sync_central()
         self.statusBar().showMessage("Open a PDF to begin (Ctrl+O)")
         self._autosave_rev: dict = {}           # document id -> the revision that was last written
-        self._autosave_jobs: dict = {}          # document id -> (Future of its background write, revision)
-        self._autosave_deferred = False         # a retry is scheduled because a mouse button was down
+        self._autosave_busy: set = set()        # ids of documents whose snapshot is being written in the background
         self._rewritten: set = set()            # ids of signed documents whose file on disk is already our rewrite
-        self._autosave_done.connect(self._autosave_collect, QtCore.Qt.QueuedConnection)
+        self._autosave_done.connect(self._autosave_finished, QtCore.Qt.QueuedConnection)
+        self._autosave_retry = QtCore.QTimer(self, singleShot=True)     # a tick put off by a pressed mouse button
+        self._autosave_retry.timeout.connect(self.autosave_now)
         self.autosave_timer = QtCore.QTimer(self)
         self.autosave_timer.timeout.connect(self.autosave_now)
         self.autosave_timer.start(int(float(os.environ.get("OPENREVU_AUTOSAVE_SECONDS", "60")) * 1000))
@@ -233,11 +234,9 @@ class Main(DocumentOps, W.QMainWindow):
         """Snapshot every document with unsaved changes and queue the snapshot for writing on a background thread.
         Returns how many were queued. Only the serialization (Document._snapshot) runs here: PyMuPDF is not thread-safe.
         While a mouse button is down (a drag), the tick is put off by a few seconds."""
-        self._autosave_collect()
         if W.QApplication.mouseButtons() != QtCore.Qt.NoButton:
-            if not self._autosave_deferred:
-                self._autosave_deferred = True
-                QtCore.QTimer.singleShot(AUTOSAVE_RETRY_MS, self._autosave_retry)
+            if not self._autosave_retry.isActive():
+                self._autosave_retry.start(AUTOSAVE_RETRY_MS)
             return 0
         n = 0
         for i in range(self.tabs.count()):
@@ -245,43 +244,36 @@ class Main(DocumentOps, W.QMainWindow):
             if not isinstance(cv, Canvas):
                 continue
             d = cv.doc
-            rid = d.recovery_id
-            if not d.modified or self._autosave_rev.get(rid) == d.revision or rid in self._autosave_jobs:
+            rid, rev = d.recovery_id, d.revision
+            if not d.modified or self._autosave_rev.get(rid) == rev or rid in self._autosave_busy:
                 continue             # unchanged since the last snapshot, or the previous one is still being written
             try:
                 fut = recovery.write_later(rid, d._snapshot(), d.path, self.tabs.tabText(i).lstrip("*"), bool(d._password))
             except Exception as e:   # autosave runs every minute: no failure may open a dialog each time
                 self._autosave_failed(e)
                 continue
-            self._autosave_jobs[rid] = (fut, d.revision)
-            fut.add_done_callback(lambda f: self._emit_autosave_done())
+            self._autosave_busy.add(rid)
+            fut.add_done_callback(lambda f, rid=rid, rev=rev: self._emit_autosave_done(f, rid, rev))
             n += 1
         return n
 
-    def _autosave_retry(self):
-        self._autosave_deferred = False
-        self.autosave_now()
-
-    def _emit_autosave_done(self):
+    def _emit_autosave_done(self, fut, rid, rev):
         """Runs on the writer thread. The queued signal hands the result to the GUI thread."""
         try:
-            self._autosave_done.emit()
+            if fut.cancelled():      # the snapshot was removed (saved or closed) before it was written
+                self._autosave_done.emit(rid, None, None)
+            else:
+                self._autosave_done.emit(rid, rev, fut.exception())
         except RuntimeError:         # the window is already gone
             pass
 
-    def _autosave_collect(self):
-        """On the GUI thread: take in the finished background writes. A failed write is retried at the next tick."""
-        for rid, (fut, rev) in list(self._autosave_jobs.items()):
-            if not fut.done():
-                continue
-            del self._autosave_jobs[rid]
-            if fut.cancelled():      # the snapshot was removed (saved or closed) before it was written
-                continue
-            e = fut.exception()
-            if e is None:
-                self._autosave_rev[rid] = rev
-            else:
-                self._autosave_failed(e)
+    def _autosave_finished(self, rid, rev, error):
+        """On the GUI thread. A failed write is retried at the next tick."""
+        self._autosave_busy.discard(rid)
+        if error is not None:
+            self._autosave_failed(error)
+        elif rev is not None:
+            self._autosave_rev[rid] = rev
 
     def _autosave_failed(self, e: BaseException):
         log.error("Autosave failed", exc_info=e)

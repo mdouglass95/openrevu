@@ -1,5 +1,7 @@
 import json
 import os
+import threading
+import time
 
 import fitz
 import pytest
@@ -8,7 +10,7 @@ from openrevu import recovery
 from openrevu.core import Document
 
 pytest.importorskip("PyQt5")
-from PyQt5 import QtWidgets
+from PyQt5 import QtCore, QtWidgets
 
 from openrevu.gui import Main
 from tests.test_sheets import SET_V1, make_set
@@ -45,6 +47,13 @@ def autosave(w):
     recovery.wait()
     QtWidgets.QApplication.processEvents()
     return n
+
+
+def wait_until(app, cond, timeout=3):
+    """Run the event loop until cond() holds or the timeout passes."""
+    t0 = time.time()
+    while time.time() - t0 < timeout and not cond():
+        app.processEvents(); time.sleep(0.01)
 
 
 def crash(w):
@@ -187,21 +196,17 @@ def test_damaged_snapshots_are_cleaned_up_not_offered(app, isolated_recovery_dir
 
 def test_a_full_disk_does_not_interrupt_work(app, pdf, isolated_recovery_dir, monkeypatch):
     w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change()
-    real = recovery.write
-    monkeypatch.setattr(recovery, "write", lambda *a, **k: (_ for _ in ()).throw(OSError("No space left on device")))
-    autosave(w)
+    with monkeypatch.context() as m:               # not monkeypatch.undo(): that would also undo the isolated recovery folder
+        m.setattr(recovery, "write", lambda *a, **k: (_ for _ in ()).throw(OSError("No space left on device")))
+        autosave(w)
     assert "Autosave failed: No space left on device" in w.statusBar().currentMessage() and files(isolated_recovery_dir) == []
-    monkeypatch.setattr(recovery, "write", real)     # not monkeypatch.undo(): that would also undo the isolated recovery folder
     assert autosave(w) == 1 and len(files(isolated_recovery_dir)) == 2       # the failed write is retried at the next tick
 
 
 def test_timer_runs_autosave(app, pdf, isolated_recovery_dir, monkeypatch):
     monkeypatch.setenv("OPENREVU_AUTOSAVE_SECONDS", "0.05")
     w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change()
-    import time
-    t0 = time.time()
-    while time.time() - t0 < 3 and not files(isolated_recovery_dir):
-        app.processEvents(); time.sleep(0.02)
+    wait_until(app, lambda: files(isolated_recovery_dir))
     assert len(files(isolated_recovery_dir)) == 2
 
 
@@ -252,14 +257,12 @@ def slow_write(monkeypatch, seconds=0.5):
     real = recovery.write
 
     def write(*a, **k):
-        import time
         time.sleep(seconds)
         real(*a, **k)
     monkeypatch.setattr(recovery, "write", write)
 
 
 def test_autosave_writes_the_snapshot_in_the_background(app, pdf, isolated_recovery_dir, monkeypatch):
-    import time
     w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change()
     slow_write(monkeypatch)
     t0 = time.perf_counter()
@@ -272,7 +275,6 @@ def test_autosave_writes_the_snapshot_in_the_background(app, pdf, isolated_recov
 @pytest.mark.parametrize("started", [False, True])
 def test_closing_a_document_while_its_snapshot_is_written_leaves_no_snapshot(app, pdf, isolated_recovery_dir, monkeypatch, started):
     """A late write would look like a crash of this session at the next start."""
-    import threading
     w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change()
     slow_write(monkeypatch, 0.3)
     gate = threading.Event()
@@ -290,13 +292,10 @@ def test_closing_a_document_while_its_snapshot_is_written_leaves_no_snapshot(app
 
 
 def test_a_background_write_error_reaches_the_status_bar(app, pdf, isolated_recovery_dir, monkeypatch):
-    import time
     w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change()
     monkeypatch.setattr(recovery, "write", lambda *a, **k: (_ for _ in ()).throw(PermissionError("read-only folder")))
-    w.autosave_now()
-    t0 = time.time()                                           # no explicit wait: the window learns it by itself
-    while time.time() - t0 < 3 and "Autosave failed" not in w.statusBar().currentMessage():
-        app.processEvents(); time.sleep(0.01)
+    w.autosave_now()                                           # no explicit wait: the window learns it by itself
+    wait_until(app, lambda: "Autosave failed" in w.statusBar().currentMessage())
     assert w.statusBar().currentMessage() == "Autosave failed: read-only folder"
 
 
@@ -316,8 +315,6 @@ def test_a_document_is_not_snapshotted_again_while_its_write_is_pending(app, pdf
 
 
 def test_autosave_waits_while_a_mouse_button_is_down(app, pdf, isolated_recovery_dir, monkeypatch):
-    import time
-    from PyQt5 import QtCore
     from openrevu import gui
     w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change()
     monkeypatch.setattr(gui, "AUTOSAVE_RETRY_MS", 50)
@@ -326,8 +323,6 @@ def test_autosave_waits_while_a_mouse_button_is_down(app, pdf, isolated_recovery
     recovery.wait(); app.processEvents()
     assert files(isolated_recovery_dir) == []
     monkeypatch.setattr(QtWidgets.QApplication, "mouseButtons", staticmethod(lambda: QtCore.Qt.NoButton))
-    t0 = time.time()                                           # the button is released: the retry writes the snapshot
-    while time.time() - t0 < 3 and not files(isolated_recovery_dir):
-        app.processEvents(); time.sleep(0.01)
+    wait_until(app, lambda: files(isolated_recovery_dir))      # the button is released: the retry writes the snapshot
     recovery.wait()
     assert len(files(isolated_recovery_dir)) == 2
