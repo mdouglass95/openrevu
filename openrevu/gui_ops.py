@@ -97,7 +97,7 @@ class DocumentOps:
         if self._need_doc():
             pg = self._ask_pages("Extract pages")
             if pg:
-                p, _ = W.QFileDialog.getSaveFileName(self, "Save extracted pages", "", "PDF (*.pdf)")
+                p = self._ask_pdf_path("Save extracted pages")
                 if p:
                     self._run(self.doc.extract_pages, pg, p, msg=f"Extracted {len(pg)} page(s)")
 
@@ -219,7 +219,7 @@ class DocumentOps:
         level, ok = W.QInputDialog.getItem(self, "PDF/A", "Level:", ["2b", "1b", "3b"], 0, False)
         if not ok:
             return
-        p, _ = W.QFileDialog.getSaveFileName(self, "Save PDF/A copy", "", "PDF (*.pdf)")
+        p = self._ask_pdf_path("Save PDF/A copy")
         if not p:
             return
         W.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
@@ -254,7 +254,7 @@ class DocumentOps:
         mode, ok = W.QInputDialog.getItem(self, "Compare", "Pair the pages:", ["By sheet number", "By page position"], 0, False)
         if not ok:
             return
-        out, _ = W.QFileDialog.getSaveFileName(self, "Save the overlay as", "comparison.pdf", "PDF (*.pdf)")
+        out = self._ask_pdf_path("Save the overlay as", "comparison.pdf")
         if not out:
             return
         from .compare import compare_documents

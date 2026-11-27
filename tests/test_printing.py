@@ -194,18 +194,28 @@ def test_printing_arch_e_at_1200_dpi_keeps_peak_memory_low(tmp_path):
 
 @pytest.fixture
 def print_to(monkeypatch):
-    """Make File > Print accept its dialog and print to a PDF file instead of a printer."""
-    def setup(path):
-        class Dialog:
-            def __init__(self, printer, parent=None):
-                self.printer = printer
+    """Make File > Print accept its dialog and print to a PDF file instead of a printer.
+    `pages`: what the user chose in the dialog, None (all pages), "current" or (from, to), 1-based.
+    Returns what the dialog was set up with: its enabled options and its page range limits."""
+    def setup(path, pages=None):
+        seen = {"options": set()}
 
+        class Dialog(QtPrintSupport.QPrintDialog):
             def exec_(self):
-                self.printer.setOutputFormat(QtPrintSupport.QPrinter.PdfFormat)
-                self.printer.setOutputFileName(str(path))
-                self.printer.setResolution(100)
+                seen["options"] = {o for o in (self.PrintPageRange, self.PrintCurrentPage) if self.testOption(o)}
+                seen["minmax"] = (self.minPage(), self.maxPage())
+                pr = self.printer()
+                pr.setOutputFormat(QtPrintSupport.QPrinter.PdfFormat)
+                pr.setOutputFileName(str(path))
+                pr.setResolution(100)
+                if pages == "current":
+                    pr.setPrintRange(QtPrintSupport.QPrinter.CurrentPage)
+                elif pages:
+                    pr.setPrintRange(QtPrintSupport.QPrinter.PageRange)
+                    pr.setFromTo(*pages)
                 return QtWidgets.QDialog.Accepted
         monkeypatch.setattr(QtPrintSupport, "QPrintDialog", Dialog)
+        return seen
     return setup
 
 
@@ -224,6 +234,35 @@ def test_print_menu_prints_every_page(app, tmp_path, print_to):
     w.print_doc()
     assert fitz.open(tmp_path / "printed.pdf").page_count == 3
     assert w.statusBar().currentMessage() == "Printed 3 page(s)."
+
+
+def test_print_menu_prints_only_the_page_range_chosen_in_the_dialog(app, tmp_path, print_to):
+    """Issue #27: File > Print printed every page whatever range the user chose."""
+    w = open_window(app, tmp_path)
+    seen = print_to(tmp_path / "printed.pdf", pages=(2, 3))
+    w.print_doc()
+    out = fitz.open(tmp_path / "printed.pdf")
+    assert out.page_count == 2 and is_blue(colour_at(out[1], 0.75, 0.75)) and not is_blue(colour_at(out[0], 0.75, 0.75))
+    assert w.statusBar().currentMessage() == "Printed 2 page(s)."
+    assert seen["options"] == {QtPrintSupport.QPrintDialog.PrintPageRange, QtPrintSupport.QPrintDialog.PrintCurrentPage}
+    assert seen["minmax"] == (1, 3)
+
+
+def test_print_menu_prints_the_current_page(app, tmp_path, print_to):
+    w = open_window(app, tmp_path)
+    w.cv.goto_page(2)
+    print_to(tmp_path / "printed.pdf", pages="current")
+    w.print_doc()
+    out = fitz.open(tmp_path / "printed.pdf")
+    assert out.page_count == 1 and is_blue(colour_at(out[0], 0.75, 0.75))
+    assert w.statusBar().currentMessage() == "Printed 1 page(s)."
+
+
+def test_print_document_prints_the_given_pages_in_order(app, tmp_path):
+    doc = make_doc(tmp_path, n=3)
+    assert print_document(pdf_printer(tmp_path / "out.pdf"), doc, pages=[2, 0])
+    out = fitz.open(tmp_path / "out.pdf")
+    assert out.page_count == 2 and is_blue(colour_at(out[0], 0.75, 0.75)) and not is_blue(colour_at(out[1], 0.75, 0.75))
 
 
 def test_print_progress_dialog_cancel_stops_the_job(app, tmp_path, print_to, monkeypatch):

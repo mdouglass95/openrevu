@@ -357,3 +357,33 @@ def test_autosave_keeps_one_snapshot_in_memory_at_a_time(app, pdf, tmp_path, iso
     wait_until(app, lambda: len(files(isolated_recovery_dir)) == 4)   # then follows without another tick
     recovery.wait(); app.processEvents()
     assert not w._autosave_busy
+
+
+@pytest.mark.parametrize("fail", ["replace", "write"])
+def test_a_failed_snapshot_write_leaves_no_temporary_file(isolated_recovery_dir, monkeypatch, fail):
+    """Issue #19: a full disk or a locked folder must not add a .tmp file on every autosave tick."""
+    def boom(*a, **k):
+        raise OSError(28, "No space left on device")
+    if fail == "replace":
+        monkeypatch.setattr(os, "replace", boom)
+    else:
+        real_open = open
+
+        def open_full_disk(p, *a, **k):
+            f = real_open(p, *a, **k)
+            if str(p).endswith(".tmp"):
+                f.write = boom   # the file exists, but writing to it fails
+            return f
+        monkeypatch.setattr("builtins.open", open_full_disk)
+    with pytest.raises(OSError):
+        recovery.write("abc123", b"%PDF-1.7", None, "t", False)
+    assert [f for f in files(isolated_recovery_dir) if f.endswith(".tmp")] == []
+
+
+def test_a_failed_snapshot_replace_goes_to_the_status_bar(app, pdf, isolated_recovery_dir, monkeypatch):
+    w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change()
+    monkeypatch.setattr(os, "replace", lambda *a: (_ for _ in ()).throw(PermissionError(13, "Access is denied")))
+    w.autosave_now()                                           # the write fails on the background thread
+    wait_until(app, lambda: "Autosave failed" in w.statusBar().currentMessage())
+    recovery.wait()
+    assert [f for f in files(isolated_recovery_dir) if f.endswith(".tmp")] == []
