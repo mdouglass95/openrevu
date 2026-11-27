@@ -44,8 +44,8 @@ def pixmap_bytes(cv):
 def test_zooming_to_800_percent_on_a_large_sheet_keeps_pixmaps_small(app, tmp_path, monkeypatch):
     monkeypatch.setattr(Canvas, "devicePixelRatioF", lambda self: 2.0)
     cv = make_canvas(tmp_path)
-    cv.set_zoom(8.0)
-    assert cv.zoom == 8.0
+    cv.set_zoom(ZOOM_MAX)
+    assert cv.zoom == ZOOM_MAX
     assert pixmap_bytes(cv) < 200 * 1024 ** 2
 
 
