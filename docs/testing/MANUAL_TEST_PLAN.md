@@ -319,6 +319,9 @@ Add a markup and press Ctrl+S. Expect a warning with **Save As…** (the default
 **Sign > Verify signatures…** (Cancel the certificate question): it must say `intact` and `unchanged since signing`.
 In that tab add a markup, press Ctrl+S, choose **Save anyway**: the file is overwritten, and Verify now says `MODIFIED` or
 `EDITED AFTER SIGNING`. Add another markup and press Ctrl+S: no second warning.
+Open a fresh copy of `signed.pdf`. Choose **File > Optimize / compress copy…** and pick `signed.pdf` itself: expect the same
+warning. **Save As…** opens the file dialog again; **Cancel** writes nothing. Save encrypted copy, Save As, Extract pages,
+PDF/A, Compare overlay and Markup Summary ask the same way.
 
 **T48 Autosave and recovery.** Start the program with `OPENREVU_AUTOSAVE_SECONDS=5 openrevu`. Open a file, add two markups, wait 10 seconds.
 Kill the program hard (`kill -9 <pid>`, or end the task). Start it again. Expect a question: "OpenRevu closed unexpectedly last time…".

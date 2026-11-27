@@ -798,6 +798,68 @@ def test_a_recovered_signed_pdf_does_not_offer_its_signed_original_as_the_file_n
     assert asked["start"] != signed_pdf
 
 
+def _copy_commands(w, monkeypatch):
+    """The commands that write a PDF to a path the user picks, with their other questions answered."""
+    monkeypatch.setattr(QtWidgets.QInputDialog, "getText", staticmethod(lambda *a, **k: ("secret", True)))
+    monkeypatch.setattr(QtWidgets.QInputDialog, "getItem", staticmethod(lambda parent, title, label, items, *a, **k: (items[0], True)))
+    monkeypatch.setattr(type(w), "_ask_pages", lambda self, *a, **k: [0])
+    return {"save_as": w.save_as, "save_encrypted": w.save_encrypted, "optimize": w.optimize,
+            "extract_pages": w.extract_pages, "export_summary_pdf": w.export_summary_pdf}
+
+
+@pytest.mark.parametrize("command", ["save_as", "save_encrypted", "optimize", "extract_pages", "export_summary_pdf"])
+def test_a_copy_command_asks_before_it_overwrites_the_signed_original(signed_win, signed_pdf, monkeypatch, tmp_path, command):
+    """Issue #35: only Save asked; the other commands rewrote a signed original that the user picked as the destination."""
+    w = signed_win
+    run = _copy_commands(w, monkeypatch)[command]
+    original = Path(signed_pdf).read_bytes()
+    picks = [signed_pdf]
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (picks.pop(0), "")))
+
+    seen = answer_with(monkeypatch, "Cancel")
+    run()
+    assert seen["asked"] == 1 and "signatures" in seen["text"]
+    assert Path(signed_pdf).read_bytes() == original
+
+    copy = str(tmp_path / "copy.pdf")
+    picks[:] = [signed_pdf, copy]                        # "Save As…" asks for another file
+    seen = answer_with(monkeypatch, "Save As…")
+    run()
+    assert seen["asked"] == 1 and picks == [] and os.path.exists(copy)
+    assert Path(signed_pdf).read_bytes() == original
+
+
+def test_save_as_from_the_signed_question_asks_again_if_the_original_is_picked(signed_win, signed_pdf, monkeypatch, tmp_path):
+    w = signed_win
+    original = Path(signed_pdf).read_bytes()
+    w.doc.add_rect(0, fitz.Rect(100, 100, 200, 200))
+    copy = str(tmp_path / "copy.pdf")
+    picks = [signed_pdf, copy]
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (picks.pop(0), "")))
+    seen = answer_with(monkeypatch, "Save As…")
+    w.save()
+    assert seen["asked"] == 2 and picks == [] and w.doc.path == copy
+    assert Path(signed_pdf).read_bytes() == original
+
+
+def test_a_copy_command_saves_over_the_signed_original_when_told_to(signed_win, signed_pdf, monkeypatch):
+    w = signed_win
+    original = Path(signed_pdf).read_bytes()
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (signed_pdf, "")))
+    seen = answer_with(monkeypatch, "Save anyway")
+    _copy_commands(w, monkeypatch)["optimize"]()
+    assert seen["asked"] == 1 and Path(signed_pdf).read_bytes() != original
+
+
+def test_a_copy_command_to_another_file_does_not_ask(signed_win, monkeypatch, tmp_path):
+    w = signed_win
+    copy = str(tmp_path / "copy.pdf")
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (copy, "")))
+    seen = answer_with(monkeypatch, "Cancel")
+    _copy_commands(w, monkeypatch)["optimize"]()
+    assert seen["asked"] == 0 and os.path.exists(copy)
+
+
 def test_a_signed_pdf_that_must_be_saved_as_a_copy_skips_the_signed_question(signed_win, signed_pdf, monkeypatch, tmp_path):
     w = signed_win
     w.doc.save_as_required = True                       # what a restricted PDF sets on open
