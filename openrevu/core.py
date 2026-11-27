@@ -1456,7 +1456,7 @@ class Document(SheetOps, PageOps):
         path = path or self.path
         if path is None:
             raise ValueError("no path")
-        in_place = self.path is not None and _same_file(path, self.path)
+        in_place = self.path is not None and same_file(path, self.path)
         if in_place and not force:
             now = _disk_state(path)
             if now is not None and self._disk is not None and now != self._disk:
@@ -1476,7 +1476,7 @@ class Document(SheetOps, PageOps):
         self.modified = False
 
 
-def _same_file(a, b) -> bool:
+def same_file(a, b) -> bool:
     """True if `a` and `b` name one file, however they are spelled (relative, `./`, case on Windows)."""
     try:
         return os.path.samefile(a, b)

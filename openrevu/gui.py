@@ -12,7 +12,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets as W
 
 from . import __version__
 from .canvas import PX_PER_PT, ZOOM_MAX_PCT, ZOOM_MIN_PCT, Canvas
-from .core import STATUSES, Document, FileChangedError
+from .core import STATUSES, Document, FileChangedError, same_file
 from .gui_ops import ERRORS, DocumentOps, parse_pages  # noqa: F401  (parse_pages re-exported)
 from .icons import tool_icon
 from . import recovery
@@ -1006,10 +1006,7 @@ class Main(DocumentOps, W.QMainWindow):
         """True if writing `path` would rewrite `d`'s digitally signed file, whose signatures are still intact."""
         if not (d.signed and d.path and path) or d.recovery_id in self._rewritten:
             return False
-        try:
-            return os.path.samefile(path, d.path)
-        except OSError:   # one of them does not exist
-            return os.path.normcase(os.path.abspath(path)) == os.path.normcase(os.path.abspath(d.path))
+        return same_file(path, d.path)
 
     def _ask_pdf_path(self, title: str, start: str = "", d: Document | None = None) -> str:
         """Ask where to write a PDF made from `d` (default: the current document). If the user picks its signed original,
