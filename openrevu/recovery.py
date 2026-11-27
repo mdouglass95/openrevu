@@ -82,19 +82,23 @@ def write(doc_id: str, data: bytes, original_path: str | None, title: str, encry
 # (os.replace onto a file that another thread is writing fails on Windows). Python joins the worker at exit.
 _writer = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="openrevu-autosave")
 _lock = threading.Lock()
-_pending: dict[str, concurrent.futures.Future] = {}     # document id -> its latest queued or running write
+_pending: dict[str, list[concurrent.futures.Future]] = {}     # document id -> its queued or running writes
 
 
 def write_later(doc_id: str, data: bytes, original_path: str | None, title: str, encrypted: bool) -> concurrent.futures.Future:
     """Queue write() on the worker thread and return its Future. The Future raises what write() raised.
     Its done-callbacks run on the worker thread (or, for a write that remove() cancels, on the caller's)."""
     with _lock:      # write is looked up when the job runs, so tests can replace it
-        fut = _pending[doc_id] = _writer.submit(lambda: write(doc_id, data, original_path, title, encrypted))
+        fut = _writer.submit(lambda: write(doc_id, data, original_path, title, encrypted))
+        _pending.setdefault(doc_id, []).append(fut)
 
     def forget(f):
         with _lock:
-            if _pending.get(doc_id) is f:
-                del _pending[doc_id]
+            futs = _pending.get(doc_id, [])
+            if f in futs:
+                futs.remove(f)
+                if not futs:
+                    del _pending[doc_id]
     fut.add_done_callback(forget)
     return fut
 
@@ -106,12 +110,13 @@ def wait() -> None:
 
 
 def remove(doc_id: str) -> None:
-    """Remove a document's snapshot. A write still queued for it is dropped and a running one is waited for,
+    """Remove a document's snapshot. Writes still queued for it are dropped and a running one is waited for,
     so no snapshot of this document appears after remove() returns."""
     with _lock:
-        fut = _pending.get(doc_id)
-    if fut is not None and not fut.cancel():
-        concurrent.futures.wait([fut])
+        futs = list(_pending.get(doc_id, []))
+    running = [f for f in futs if not f.cancel()]
+    if running:
+        concurrent.futures.wait(running)
     for p in _paths(doc_id):
         try:
             os.remove(p)

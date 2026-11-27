@@ -210,6 +210,7 @@ class Main(DocumentOps, W.QMainWindow):
         self.statusBar().showMessage("Open a PDF to begin (Ctrl+O)")
         self._autosave_rev: dict = {}           # document id -> the revision that was last written
         self._autosave_busy: set = set()        # ids of documents whose snapshot is being written in the background
+        self._autosave_more = False             # a tick stopped early: go on when the running write ends
         self._rewritten: set = set()            # ids of signed documents whose file on disk is already our rewrite
         self._autosave_done.connect(self._autosave_finished, QtCore.Qt.QueuedConnection)
         self._autosave_retry = QtCore.QTimer(self, singleShot=True)     # a tick put off by a pressed mouse button
@@ -232,7 +233,8 @@ class Main(DocumentOps, W.QMainWindow):
 
     def autosave_now(self) -> int:
         """Snapshot every document with unsaved changes and queue the snapshot for writing on a background thread.
-        Returns how many were queued. Only the serialization (Document._snapshot) runs here: PyMuPDF is not thread-safe.
+        Only one snapshot is held at a time: while one is written, the next document waits for that write to end.
+        Returns how many were queued now. Only the serialization (Document._snapshot) runs here: PyMuPDF is not thread-safe.
         While a mouse button is down (a drag), the tick is put off by a few seconds."""
         if W.QApplication.mouseButtons() != QtCore.Qt.NoButton:
             if not self._autosave_retry.isActive():
@@ -247,6 +249,9 @@ class Main(DocumentOps, W.QMainWindow):
             rid, rev = d.recovery_id, d.revision
             if not d.modified or self._autosave_rev.get(rid) == rev or rid in self._autosave_busy:
                 continue             # unchanged since the last snapshot, or the previous one is still being written
+            if self._autosave_busy:  # a snapshot is a whole document: keep one in memory at a time
+                self._autosave_more = True
+                break
             try:
                 fut = recovery.write_later(rid, d._snapshot(), d.path, self.tabs.tabText(i).lstrip("*"), bool(d._password))
             except Exception as e:   # autosave runs every minute: no failure may open a dialog each time
@@ -274,6 +279,9 @@ class Main(DocumentOps, W.QMainWindow):
             self._autosave_failed(error)
         elif rev is not None:
             self._autosave_rev[rid] = rev
+        if self._autosave_more:
+            self._autosave_more = False
+            self.autosave_now()
 
     def _autosave_failed(self, e: BaseException):
         log.error("Autosave failed", exc_info=e)

@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import threading
 import time
 
@@ -42,11 +43,14 @@ def choose(monkeypatch, label):
 
 
 def autosave(w):
-    """One autosave tick, then wait until its background writes have ended and their results reached the window."""
+    """One autosave tick, then wait until its background writes, and the writes it queued one after another,
+    have ended and their results reached the window. Returns how many the tick itself queued."""
     n = w.autosave_now()
-    recovery.wait()
-    QtWidgets.QApplication.processEvents()
-    return n
+    while True:
+        recovery.wait()
+        QtWidgets.QApplication.processEvents()
+        if not w._autosave_busy:
+            return n
 
 
 def wait_until(app, cond, timeout=3):
@@ -264,10 +268,10 @@ def slow_write(monkeypatch, seconds=0.5):
 
 def test_autosave_writes_the_snapshot_in_the_background(app, pdf, isolated_recovery_dir, monkeypatch):
     w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change()
-    slow_write(monkeypatch)
+    slow_write(monkeypatch, 1.0)
     t0 = time.perf_counter()
     assert w.autosave_now() == 1
-    assert time.perf_counter() - t0 < 0.25                     # the GUI thread does not wait for the disk
+    assert time.perf_counter() - t0 < 0.5                      # the GUI thread does not wait for the disk
     recovery.wait()
     assert len(files(isolated_recovery_dir)) == 2
 
@@ -326,3 +330,30 @@ def test_autosave_waits_while_a_mouse_button_is_down(app, pdf, isolated_recovery
     wait_until(app, lambda: files(isolated_recovery_dir))      # the button is released: the retry writes the snapshot
     recovery.wait()
     assert len(files(isolated_recovery_dir)) == 2
+
+
+def test_remove_drops_every_queued_write_of_a_document(isolated_recovery_dir, monkeypatch):
+    """Two writes of one document queued behind another: remove() must stop both, not only the latest."""
+    gate = threading.Event()
+    real = recovery.write
+    monkeypatch.setattr(recovery, "write", lambda *a, **k: (gate.wait(2), real(*a, **k)))
+    recovery.write_later("busy", b"x", None, "busy", False)
+    recovery.write_later("dup", b"1", None, "dup", False)
+    recovery.write_later("dup", b"2", None, "dup", False)
+    recovery.remove("dup")
+    gate.set(); recovery.wait()
+    assert not [f for f in files(isolated_recovery_dir) if f.startswith("dup")]
+
+
+def test_autosave_keeps_one_snapshot_in_memory_at_a_time(app, pdf, tmp_path, isolated_recovery_dir, monkeypatch):
+    """Each snapshot is a whole document: with several open, the next is made only when the previous is written."""
+    other = str(tmp_path / "other.pdf"); shutil.copy(pdf, other)
+    w = Main(pdf); w.open(other)
+    for i in range(2):
+        w.tabs.widget(i).doc.add_rect(0, fitz.Rect(10, 10, 60, 60))
+    w._after_change()
+    slow_write(monkeypatch, 0.3)
+    assert w.autosave_now() == 1                               # the second document waits for the first write
+    wait_until(app, lambda: len(files(isolated_recovery_dir)) == 4)   # then follows without another tick
+    recovery.wait(); app.processEvents()
+    assert not w._autosave_busy
