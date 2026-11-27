@@ -364,6 +364,7 @@ def test_status_bar_zoom_box_layers_and_measurements_panel(win, tmp_path):
     assert w.cv.zoom < 96 / 72 * 2
     w.cv.goto_page(2); assert w.lbl_page.text() == "Page 3 of 3" and w.page_spin.value() == 3
     # measurements panel
+    w.show_panel("Measurements")
     w.doc.add_count(0, (5, 5), group="Door"); w.doc.add_count(0, (9, 9), group="Door"); w._after_change()
     rows = [[w.meas_table.item(r, c).text() for c in range(4)] for r in range(w.meas_table.rowCount())]
     assert rows == [["Door", "2", "2", "ea"]]
@@ -411,6 +412,7 @@ def test_markups_refresh_and_selection_measure_each_markup_once(win, monkeypatch
     calls = []
     real = Markup.measurement
     monkeypatch.setattr(Markup, "measurement", lambda self: calls.append(self.xref) or real(self))
+    w.show_panel("Measurements")
     w.mk_status.setCurrentIndex(w.mk_status.count() - 1)   # a status filter hides every row, but not the totals
     calls.clear()
     w.refresh_markups()
@@ -851,6 +853,7 @@ def test_typing_in_the_filter_rebuilds_the_list_once(win, monkeypatch):
 
 def test_hidden_markups_list_is_not_rebuilt_until_shown(win, monkeypatch, app):
     w = win
+    w.show_panel("Measurements")
     w.doc.add_length(0, [(10, 100), (160, 100)]); w._after_change()
     assert w.mk_table.rowCount() == 1 and w.meas_table.rowCount() == 1
     w.d_markups.hide(); w.right_dock.hide(); app.processEvents()
@@ -865,6 +868,10 @@ def test_hidden_markups_list_is_not_rebuilt_until_shown(win, monkeypatch, app):
     assert calls == [1, 1] and w.meas_table.rowCount() == 0
     w._after_change(); w.d_markups.show(); app.processEvents()
     assert calls == [1, 1, 1]                                 # shown and up to date: no extra rebuild
+    w.show_panel("Properties"); w.doc.add_length(0, [(10, 300), (160, 300)]); w._after_change()
+    assert w.meas_table.rowCount() == 0                       # the Measurements tab is behind another tab
+    w.show_panel("Measurements")
+    assert calls == [1, 1, 1, 1, 1] and w.meas_table.rowCount() == 1
 
 
 def test_edits_do_not_read_sheets_while_the_sheets_panel_is_not_shown(win, monkeypatch):

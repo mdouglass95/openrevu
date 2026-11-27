@@ -1359,13 +1359,14 @@ class Document(SheetOps, PageOps):
     def markups(self, include_children=False, page=None):
         """Top-level markups of every page, or only of page number `page`."""
         out = []
-        for pno, page in enumerate(self.doc) if page is None else ((page, self.doc[page]),):
-            for a in page.annots() or []:
+        pages = enumerate(self.doc) if page is None else [(page, self.doc[page])]
+        for pno, pg in pages:
+            for a in pg.annots() or []:
                 if a.type[1] in ("Popup", "Link", "Widget"):
                     continue
                 if not include_children and (_xget(self.doc, a.xref, PARENT_KEY) or _xget(self.doc, a.xref, "IRT")):
                     continue
-                out.append(Markup(a, pno, page, self))
+                out.append(Markup(a, pno, pg, self))
         return out
 
     def markup_at(self, pno, point, tol=4):
