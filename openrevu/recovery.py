@@ -11,6 +11,8 @@ import sys
 import time
 import uuid
 
+from ._util import replace_file
+
 
 def recovery_dir() -> str:
     """The folder for snapshots. OPENREVU_RECOVERY_DIR overrides it (used by the tests)."""
@@ -62,10 +64,10 @@ def write(doc_id: str, data: bytes, original_path: str | None, title: str, encry
     for path, payload, mode in ((pdf, data, "wb"), (meta, json.dumps({
             "id": doc_id, "pid": os.getpid(), "path": original_path, "title": title,
             "time": time.time(), "encrypted": encrypted}), "w")):
-        tmp = path + ".tmp"
-        with open(tmp, mode, **({"encoding": "utf-8"} if mode == "w" else {})) as f:
-            f.write(payload)
-        os.replace(tmp, path)
+        def write_to(tmp, payload=payload, mode=mode):
+            with open(tmp, mode, **({"encoding": "utf-8"} if mode == "w" else {})) as f:
+                f.write(payload)
+        replace_file(path, write_to)
 
 
 def remove(doc_id: str) -> None:
