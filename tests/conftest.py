@@ -29,6 +29,19 @@ def no_unexpected_dialogs(monkeypatch):
         for n in names:
             monkeypatch.setattr(cls, n, boom(f"{cls.__name__}.{n}"))
 
+    # A dialog or menu built as an instance and shown with exec_() blocks the same way (issue #23).
+    # QMessageBox and the other dialogs inherit QDialog.exec_; PyQt binds QPrintDialog.exec_ and QMenu.exec_ separately.
+    from PyQt5 import QtPrintSupport as P
+
+    def boom_exec(name):
+        def f(self, *a, **k):
+            raise AssertionError(f"unexpected dialog: {type(self).__name__}.{name} {getattr(self, 'text', lambda: '')()!r}")
+        return f
+
+    for cls in (W.QDialog, P.QPrintDialog, W.QMenu):
+        for n in ("exec_", "exec"):
+            monkeypatch.setattr(cls, n, boom_exec(n))
+
 
 @pytest.fixture(autouse=True)
 def fail_on_unhandled_exceptions():
