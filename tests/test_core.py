@@ -132,32 +132,62 @@ def test_a_blank_signature_field_is_not_signed(pdf, tmp_path):
     assert not Document(str(out)).signed
 
 
-def _without_sigflags(src, dst):
-    d = fitz.open(src)
-    d.xref_set_key(d.pdf_catalog(), "AcroForm/SigFlags", "null")
-    d.save(dst)
-    assert fitz.open(dst).get_sigflags() <= 0
+def _incrementally(src, dst, change):
+    """Copy src to dst, then apply change(fitz document) to dst as an incremental update, which keeps the signed bytes."""
+    import shutil
+    shutil.copy(src, dst)
+    d = fitz.open(dst)
+    change(d)
+    d.save(dst, incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
     return str(dst)
 
 
+def _signature_field(d):
+    return int(d.xref_get_key(d.pdf_catalog(), "AcroForm/Fields")[1].strip("[]").split()[0])
+
+
+def test_a_signed_field_nested_in_the_field_tree_counts(signed_pdf, tmp_path):
+    # Approvals (no /FT) > Seal (/FT /Sig) > the signed widget with the /V; the type is inherited from Seal
+    def nest(d):
+        widget = _signature_field(d)
+        group, field = d.get_new_xref(), d.get_new_xref()
+        d.update_object(group, f"<</T(Approvals)/Kids[{field} 0 R]>>")
+        d.update_object(field, f"<</FT/Sig/T(Seal)/Parent {group} 0 R/Kids[{widget} 0 R]>>")
+        d.xref_set_key(widget, "FT", "null")
+        d.xref_set_key(widget, "T", "null")
+        d.xref_set_key(widget, "Parent", f"{field} 0 R")
+        form = int(d.xref_get_key(d.pdf_catalog(), "AcroForm")[1].split()[0])
+        d.xref_set_key(form, "Fields", f"[{group} 0 R]")
+        d.xref_set_key(form, "SigFlags", "null")
+    assert Document(_incrementally(signed_pdf, tmp_path / "nested.pdf", nest)).signed
+
+
 def test_a_signed_pdf_without_sigflags_is_still_signed(signed_pdf, tmp_path):
-    assert Document(_without_sigflags(signed_pdf, tmp_path / "noflags.pdf")).signed
+    def drop_sigflags(d):
+        d.xref_set_key(int(d.xref_get_key(d.pdf_catalog(), "AcroForm")[1].split()[0]), "SigFlags", "null")
+    out = _incrementally(signed_pdf, tmp_path / "noflags.pdf", drop_sigflags)
+    assert fitz.open(out).get_sigflags() <= 0
+    assert Document(out).signed
 
 
-def test_a_signed_field_nested_in_the_field_tree_counts(pdf, tmp_path):
-    # Approvals (no /FT) > Seal (/FT /Sig) > widget with the /V; the type is inherited from Seal
-    d = fitz.open(pdf)
-    sig, group, field, kid = (d.get_new_xref() for _ in range(4))
-    d.update_object(sig, "<</Type/Sig/Filter/Adobe.PPKLite/SubFilter/adbe.pkcs7.detached/ByteRange[0 0 0 0]/Contents<00>>>")
-    d.update_object(group, f"<</T(Approvals)/Kids[{field} 0 R]>>")
-    d.update_object(field, f"<</FT/Sig/T(Seal)/Parent {group} 0 R/Kids[{kid} 0 R]>>")
-    d.update_object(kid, f"<</Type/Annot/Subtype/Widget/Rect[40 40 240 100]/Parent {field} 0 R/P {d[0].xref} 0 R"
-                         f"/V {sig} 0 R>>")
-    d.xref_set_key(d[0].xref, "Annots", f"[{kid} 0 R]")
-    d.xref_set_key(d.pdf_catalog(), "AcroForm", f"<</Fields[{group} 0 R]>>")
-    out = tmp_path / "nested.pdf"
-    d.save(out)
-    assert Document(str(out)).signed
+def test_a_markup_added_incrementally_after_signing_keeps_the_pdf_signed(signed_pdf, tmp_path):
+    out = _incrementally(signed_pdf, tmp_path / "later.pdf", lambda d: d[0].add_rect_annot(fitz.Rect(10, 10, 50, 50)))
+    assert Document(out).signed
+
+
+def test_a_signed_pdf_rewritten_by_a_save_is_no_longer_signed(signed_pdf):
+    """Issue #34: a full rewrite breaks every signature, but the fields keep their /V and still looked signed."""
+    doc = Document(signed_pdf)
+    doc.add_rect(0, fitz.Rect(100, 100, 200, 200))
+    doc.save()
+    assert not Document(signed_pdf).signed
+
+
+def test_a_signature_whose_byte_range_does_not_fit_the_file_is_not_counted(signed_pdf, tmp_path):
+    def shift(d):
+        sig = int(d.xref_get_key(_signature_field(d), "V")[1].split()[0])
+        d.xref_set_key(sig, "ByteRange", "[0 10 20 30]")
+    assert not Document(_incrementally(signed_pdf, tmp_path / "moved.pdf", shift)).signed
 
 
 def test_csv_and_render(pdf, tmp_path):
