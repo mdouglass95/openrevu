@@ -497,9 +497,7 @@ class Canvas(W.QGraphicsView):
 
     def _refind(self, m: Markup):
         xref, pno = m._annot.xref if m._gen == self.doc.generation else m._xref, m.page_no
-        if pno >= self.doc.page_count:       # its page was deleted
-            return None
-        return next((x for x in self.doc.markups(page=pno) if x.xref == xref), None)
+        return next((x for x in self.doc.markups(page=pno) if x.xref == xref), None)   # None if its page was deleted
 
     def _commit_drag(self, pno, a, b, pts):
         r, t = fitz.Rect(a, b).normalize(), self.tool

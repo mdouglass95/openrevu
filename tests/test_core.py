@@ -225,3 +225,5 @@ def test_markups_page_walks_only_that_page(pdf, monkeypatch):
     assert hit is not None and hit.page_no == 0 and built == [0]       # page 1's 20 markups are never visited
     built.clear()
     assert d.markup_at(0, (500, 500)) is None and built == [0]
+    for bad in (-1, d.page_count):                                     # no such page: nothing there, as before
+        assert d.markups(page=bad) == [] and d.markup_at(bad, (150, 150)) is None

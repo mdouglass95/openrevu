@@ -874,6 +874,17 @@ def test_hidden_markups_list_is_not_rebuilt_until_shown(win, monkeypatch, app):
     assert calls == [1, 1, 1, 1, 1] and w.meas_table.rowCount() == 1
 
 
+def test_showing_the_measurements_tab_keeps_the_markups_list_selection(win, app):
+    """Only the stale part is filled: the Markups List the user is working in is not rebuilt."""
+    w = win
+    w.show_panel("Properties"); w.doc.add_length(0, [(10, 100), (160, 100)]); w._after_change()
+    w.mk_table.selectRow(0); app.processEvents()
+    rows_before = w._rows
+    w.show_panel("Measurements"); app.processEvents()
+    assert w.meas_table.rowCount() == 1
+    assert w._rows is rows_before and [r.row() for r in w.mk_table.selectionModel().selectedRows()] == [0]
+
+
 def test_edits_do_not_read_sheets_while_the_sheets_panel_is_not_shown(win, monkeypatch):
     w = win
     calls = []

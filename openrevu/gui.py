@@ -1217,36 +1217,48 @@ class Main(DocumentOps, W.QMainWindow):
         """Fill the Markups List with its totals line, and the Measurements table. A part that is not shown is
         cleared and skipped, and filled when it is shown again."""
         self.mk_filter_timer.stop()
-        list_on, meas_on = self._markups_list_shown(), self._measurements_shown()
-        self._list_stale, self._meas_stale = not list_on, not meas_on
-        self._rows = []
-        t = self.mk_table
-        t.setSortingEnabled(False)
-        t.setRowCount(0)
-        self.meas_table.setRowCount(0)
-        self.totals.setText("")
-        d = self.doc
-        cols = d.columns if d else []
-        t.setColumnCount(7 + len(cols))
-        t.setHorizontalHeaderLabels(["Page", "Subject", "Type", "Author", "Status", "Comment", "Value"] + [c["name"] for c in cols])
-        if d and (list_on or meas_on):
-            measured = d.measured()
-            if list_on:
-                self._fill_markups_list(d, measured, cols)
-            if meas_on:
+        self._list_stale = self._meas_stale = True
+        self._refresh_markups_if_stale()
+
+    def _refresh_markups_if_stale(self, *_):
+        """Bring each stale part up to date: fill it if it is shown, else clear it. A part that is current is left
+        alone, so showing the Measurements tab keeps the Markups List and its selection."""
+        d, measured = self.doc, None
+        if self._list_stale:
+            shown = self._markups_list_shown()
+            self._list_stale = not shown
+            measured = self._fill_markups_list(d if shown else None)
+        if self._meas_stale:
+            shown = self._measurements_shown()
+            self._meas_stale = not shown
+            self.meas_table.setRowCount(0)
+            if d and shown:
+                measured = measured if measured is not None else d.measured()
                 for k, ((subj, kind, unit), (n, tot)) in enumerate(sorted(d.takeoff_by_subject(measured).items())):
                     self.meas_table.insertRow(k)
                     for c, v in enumerate((subj, str(n), d.fmt(kind, tot, unit).split(" ")[0], {"area": f"{unit}²", "volume": f"{unit}³"}.get(kind, unit))):
                         self.meas_table.setItem(k, c, W.QTableWidgetItem(v))
-        t.setSortingEnabled(True)
+        self._rebuild_custom_fields()
+
+    def _fill_markups_list(self, d):
+        """Rebuild the Markups List and its totals line from document `d` (None: leave them empty).
+        Returns the measured markups it used, or None."""
+        self._rows = []
+        t = self.mk_table
+        t.setSortingEnabled(False)
+        t.setRowCount(0)
+        self.totals.setText("")
+        cols = self.doc.columns if self.doc else []
+        t.setColumnCount(7 + len(cols))
+        t.setHorizontalHeaderLabels(["Page", "Subject", "Type", "Author", "Status", "Comment", "Value"] + [c["name"] for c in cols])
         if not getattr(self, "_mk_widths_set", False):
             for col, width in enumerate((60, 140, 90, 90, 90, 260, 100)):
                 t.setColumnWidth(col, width)
             self._mk_widths_set = True
-        self._rebuild_custom_fields()
-
-    def _fill_markups_list(self, d, measured, cols):
-        t = self.mk_table
+        if not d:
+            t.setSortingEnabled(True)
+            return None
+        measured = d.measured()
         q, st = self.mk_filter.text().lower(), self.mk_status.currentIndex()
         for m, r in measured:
             status = m.status
@@ -1268,12 +1280,10 @@ class Main(DocumentOps, W.QMainWindow):
                     it.setData(QtCore.Qt.DisplayRole, int(txt))
                 t.setItem(i, c, it)
             self._rows.append(m)
+        t.setSortingEnabled(True)
         lines = [f"{k.title()}: {d.fmt(k, v, u)}" for (k, u), v in sorted(d.takeoff(measured).items())]
         self.totals.setText("Totals — " + ("; ".join(lines) if lines else "no measurements yet"))
-
-    def _refresh_markups_if_stale(self, *_):
-        if (self._list_stale and self._markups_list_shown()) or (self._meas_stale and self._measurements_shown()):
-            self.refresh_markups()
+        return measured
 
     def _table_select(self):
         rows = self.mk_table.selectionModel().selectedRows()

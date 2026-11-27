@@ -215,6 +215,8 @@ open area. Click outside every room: expect "region is not enclosed".
 
 **T28 Measurements panel.** Open the **Measurements** tab. Expect the scale of the page, and a table of totals by subject.
 Click **Export summary (CSV)…** and open the file in a spreadsheet.
+Switch to the **Properties** tab, draw a new length, select a row in the Markups List, then switch back to **Measurements**.
+Expect the new length counted in the table, and the Markups List row still selected.
 
 **T28a Revu scales and measurements.** Open `tests/data/revu/RevuTest.pdf`, which was calibrated and measured in Bluebeam Revu.
 Expect the status bar to show `Scale: 1 in = 8 ft (viewports on page)`. Measure a length inside each of the two small viewports on the

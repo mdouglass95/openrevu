@@ -1357,9 +1357,12 @@ class Document(SheetOps, PageOps):
 
     # --- querying / editing ---
     def markups(self, include_children=False, page=None):
-        """Top-level markups of every page, or only of page number `page`."""
+        """Top-level markups of every page, or only of page number `page` (none if there is no such page)."""
         out = []
-        pages = enumerate(self.doc) if page is None else [(page, self.doc[page])]
+        if page is None:
+            pages = enumerate(self.doc)
+        else:
+            pages = [(page, self.doc[page])] if 0 <= page < self.doc.page_count else []
         for pno, pg in pages:
             for a in pg.annots() or []:
                 if a.type[1] in ("Popup", "Link", "Widget"):
