@@ -541,10 +541,18 @@ class Main(DocumentOps, W.QMainWindow):
         hh.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         hh.customContextMenuRequested.connect(self._header_menu)
         hh.setToolTip("Right-click to add or remove a column")
-        self.mk_filter.textChanged.connect(self.refresh_markups)
+        # rebuild once typing pauses, not on every keystroke; Enter applies the filter at once
+        self.mk_filter_timer = QtCore.QTimer(self, singleShot=True, interval=200)
+        self.mk_filter_timer.timeout.connect(self.refresh_markups)
+        self.mk_filter.textChanged.connect(lambda _t: self.mk_filter_timer.start())
+        self.mk_filter.returnPressed.connect(self.refresh_markups)
         self.mk_status.currentIndexChanged.connect(self.refresh_markups)
         mkl.addWidget(self.mk_table)
         self.d_markups = self._dock("Markups List", mkw, QtCore.Qt.BottomDockWidgetArea)
+        self._list_stale = self._meas_stale = False    # refresh_markups skipped a hidden part: fill it when shown
+        for dock in (self.d_markups, self.right_dock):
+            dock.visibilityChanged.connect(self._refresh_markups_if_stale)
+        self.right_tabs.currentChanged.connect(self._refresh_markups_if_stale)
         self.resizeDocks([self.left_dock, self.right_dock], [230, 290], QtCore.Qt.Horizontal)
         self.resizeDocks([self.d_markups], [190], QtCore.Qt.Vertical)
 
@@ -1225,54 +1233,84 @@ class Main(DocumentOps, W.QMainWindow):
         self.act_arch.setChecked(bool(d) and d.unit_style == "feet-inches")
         self.setWindowTitle(f"OpenRevu — {d.path}" if d and d.path else "OpenRevu")
 
+    def _markups_list_shown(self):
+        """The user's choice (isHidden), not isVisible: a window that is not on screen still counts as shown."""
+        return not self.d_markups.isHidden()
+
+    def _measurements_shown(self):
+        return not self.right_dock.isHidden() and self.panel_name(self.right_tabs, self.right_tabs.currentIndex()) == "Measurements"
+
     def refresh_markups(self):
+        """Fill the Markups List with its totals line, and the Measurements table. A part that is not shown is
+        cleared and skipped, and filled when it is shown again."""
+        self.mk_filter_timer.stop()
+        self._list_stale = self._meas_stale = True
+        self._refresh_markups_if_stale()
+
+    def _refresh_markups_if_stale(self, *_):
+        """Bring each stale part up to date: fill it if it is shown, else clear it. A part that is current is left
+        alone, so showing the Measurements tab keeps the Markups List and its selection."""
+        d, measured = self.doc, None
+        if self._list_stale:
+            shown = self._markups_list_shown()
+            self._list_stale = not shown
+            measured = self._fill_markups_list(d if shown else None)
+        if self._meas_stale:
+            shown = self._measurements_shown()
+            self._meas_stale = not shown
+            self.meas_table.setRowCount(0)
+            if d and shown:
+                measured = measured if measured is not None else d.measured()
+                for k, ((subj, kind, unit), (n, tot)) in enumerate(sorted(d.takeoff_by_subject(measured).items())):
+                    self.meas_table.insertRow(k)
+                    for c, v in enumerate((subj, str(n), d.fmt(kind, tot, unit).split(" ")[0], {"area": f"{unit}²", "volume": f"{unit}³"}.get(kind, unit))):
+                        self.meas_table.setItem(k, c, W.QTableWidgetItem(v))
+        self._rebuild_custom_fields()
+
+    def _fill_markups_list(self, d):
+        """Rebuild the Markups List and its totals line from document `d` (None: leave them empty).
+        Returns the measured markups it used, or None."""
         self._rows = []
         t = self.mk_table
         t.setSortingEnabled(False)
         t.setRowCount(0)
-        self.meas_table.setRowCount(0)
-        d = self.doc
-        cols = d.columns if d else []
+        self.totals.setText("")
+        cols = self.doc.columns if self.doc else []
         t.setColumnCount(7 + len(cols))
         t.setHorizontalHeaderLabels(["Page", "Subject", "Type", "Author", "Status", "Comment", "Value"] + [c["name"] for c in cols])
-        if d:
-            q, st = self.mk_filter.text().lower(), self.mk_status.currentIndex()
-            measured = d.measured()
-            for m, r in measured:
-                status = m.status
-                if st and STATUSES[st - 1] != status:
-                    continue
-                val = d.fmt(*r) if r else ""
-                cv = m.custom()
-                row = [str(m.page_no + 1), m.subject, m.kind, m.author, status, m.comment, val] \
-                    + [custom_text(cv.get(c["name"])) for c in cols]
-                if q and q not in " ".join(row).lower():
-                    continue
-                i = t.rowCount()
-                t.insertRow(i)
-                for c, txt in enumerate(row):
-                    it = W.QTableWidgetItem(txt)
-                    it.setToolTip(txt)                 # the full text, when the column is too narrow
-                    if c == 0:
-                        it.setData(QtCore.Qt.UserRole, len(self._rows))
-                        it.setData(QtCore.Qt.DisplayRole, int(txt))
-                    t.setItem(i, c, it)
-                self._rows.append(m)
-            for k, ((subj, kind, unit), (n, tot)) in enumerate(sorted(d.takeoff_by_subject(measured).items())):
-                self.meas_table.insertRow(k)
-                for c, v in enumerate((subj, str(n), d.fmt(kind, tot, unit).split(" ")[0], {"area": f"{unit}²", "volume": f"{unit}³"}.get(kind, unit))):
-                    self.meas_table.setItem(k, c, W.QTableWidgetItem(v))
-        t.setSortingEnabled(True)
         if not getattr(self, "_mk_widths_set", False):
             for col, width in enumerate((60, 140, 90, 90, 90, 260, 100)):
                 t.setColumnWidth(col, width)
             self._mk_widths_set = True
-        self._rebuild_custom_fields()
-        if d:
-            lines = [f"{k.title()}: {d.fmt(k, v, u)}" for (k, u), v in sorted(d.takeoff(measured).items())]
-            self.totals.setText("Totals — " + ("; ".join(lines) if lines else "no measurements yet"))
-        else:
-            self.totals.setText("")
+        if not d:
+            t.setSortingEnabled(True)
+            return None
+        measured = d.measured()
+        q, st = self.mk_filter.text().lower(), self.mk_status.currentIndex()
+        for m, r in measured:
+            status = m.status
+            if st and STATUSES[st - 1] != status:
+                continue
+            val = d.fmt(*r) if r else ""
+            cv = m.custom()
+            row = [str(m.page_no + 1), m.subject, m.kind, m.author, status, m.comment, val] \
+                + [custom_text(cv.get(c["name"])) for c in cols]
+            if q and q not in " ".join(row).lower():
+                continue
+            i = t.rowCount()
+            t.insertRow(i)
+            for c, txt in enumerate(row):
+                it = W.QTableWidgetItem(txt)
+                it.setToolTip(txt)                 # the full text, when the column is too narrow
+                if c == 0:
+                    it.setData(QtCore.Qt.UserRole, len(self._rows))
+                    it.setData(QtCore.Qt.DisplayRole, int(txt))
+                t.setItem(i, c, it)
+            self._rows.append(m)
+        t.setSortingEnabled(True)
+        lines = [f"{k.title()}: {d.fmt(k, v, u)}" for (k, u), v in sorted(d.takeoff(measured).items())]
+        self.totals.setText("Totals — " + ("; ".join(lines) if lines else "no measurements yet"))
+        return measured
 
     def _table_select(self):
         rows = self.mk_table.selectionModel().selectedRows()
