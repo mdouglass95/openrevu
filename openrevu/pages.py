@@ -16,6 +16,7 @@ class PageOps:
     def _remap_scales(self, mapping: dict):
         """mapping: old page index -> new index (missing = page removed)."""
         self.page_scales = {mapping[k]: v for k, v in self.page_scales.items() if k in mapping}
+        self.viewports = [(mapping[p], r, sc) for p, r, sc in self.viewports if p in mapping]
         self._invalidate_pages()
 
     def _check(self, pnos):
@@ -50,6 +51,7 @@ class PageOps:
         for p in pnos:
             pg = self.doc[p]
             pg.set_rotation((pg.rotation + degrees) % 360)
+        self._page_geometry_changed()
 
     @mutates
     def move_page(self, src, dst):
@@ -77,6 +79,7 @@ class PageOps:
             raise ValueError("crop rectangle outside page")
         cb = pg.cropbox
         pg.set_cropbox(fitz.Rect(r.x0 + cb.x0, r.y0 + cb.y0, r.x1 + cb.x0, r.y1 + cb.y0))
+        self._page_geometry_changed()
 
     @mutates
     def insert_pdf(self, path, at=None, pages=None, password=None):
