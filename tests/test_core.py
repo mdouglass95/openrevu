@@ -102,6 +102,17 @@ def test_failed_in_place_save_keeps_the_document_usable(pdf, monkeypatch):
     assert len(Document(pdf).markups()) == 1
 
 
+def test_a_new_empty_document_takes_pages_and_undoes_them(tmp_path):
+    """Issue #39: the first operation on Document() used to fail, because no PDF with zero pages can be saved."""
+    doc = Document()
+    doc.insert_blank()
+    assert doc.doc.page_count == 1
+    assert doc.undo() and doc.doc.page_count == 0
+    assert doc.redo() and doc.doc.page_count == 1
+    doc.save(str(tmp_path / "new.pdf"))
+    assert Document(str(tmp_path / "new.pdf")).doc.page_count == 1
+
+
 def test_opening_a_signed_pdf_sets_the_signed_flag(signed_pdf, pdf):
     assert Document(signed_pdf).signed
     assert not Document(pdf).signed
