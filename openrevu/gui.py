@@ -1017,9 +1017,10 @@ class Main(DocumentOps, W.QMainWindow):
                     choice = self._ask_file_changed()
                     if choice == "cancel":
                         return False
-                    in_place = choice == "overwrite"
-                    if in_place:
+                    if choice == "overwrite":
                         d.save(force=True)
+                    else:
+                        in_place = False
             if not in_place:
                 title = "Save a copy (this PDF restricts editing)" if d.restricted else "Save"
                 # a signed document's suggested path is its signed original: overwriting it is what the warning is about
