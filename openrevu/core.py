@@ -1437,7 +1437,8 @@ class Document(SheetOps, PageOps):
         path = path or self.path
         if path is None:
             raise ValueError("no path")
-        if path == self.path and not force:
+        in_place = self.path is not None and _same_file(path, self.path)
+        if in_place and not force:
             now = _disk_state(path)
             if now is not None and self._disk is not None and now != self._disk:
                 raise FileChangedError(f"The file was changed by another program since you opened it: {path}")
@@ -1445,7 +1446,7 @@ class Document(SheetOps, PageOps):
         kw = {"garbage": 3, "deflate": True, **opts}
         if "encryption" not in kw:
             kw.update(self._encryption_kwargs())
-        if path == self.path:
+        if in_place:
             tmp = path + ".tmp"
             # self.doc is memory-backed (see _open), so `path` can be replaced while it stays open.
             try:
@@ -1465,6 +1466,14 @@ class Document(SheetOps, PageOps):
             self.save_as_required = False   # the new file is the user's own copy
         self._disk = _disk_state(path)
         self.modified = False
+
+
+def _same_file(a, b) -> bool:
+    """True if `a` and `b` name one file, however they are spelled (relative, `./`, case on Windows)."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:   # one of them does not exist: compare the spellings
+        return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
 
 
 def _disk_state(path) -> tuple[int, int] | None:

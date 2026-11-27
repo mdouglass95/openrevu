@@ -205,3 +205,15 @@ def test_save_as_menu_to_the_same_file_overwrites_without_asking_again(win, pdf,
     win.save_as()
     assert seen["asked"] == 0
     assert len(Document(pdf).markups()) == 1
+
+
+def test_a_save_to_another_spelling_of_the_same_file_is_checked(tmp_path, monkeypatch):
+    """`./a.pdf`, an absolute path and `a.pdf` name one file: saving to any of them is a save in place."""
+    monkeypatch.chdir(tmp_path)
+    _pdf(tmp_path / "a.pdf")
+    d = Document("a.pdf")
+    colleague_edits(tmp_path / "a.pdf")
+    for spelling in (os.path.join(".", "a.pdf"), str(tmp_path / "a.pdf")):
+        with pytest.raises(FileChangedError):
+            d.save(spelling)
+    assert d.path == "a.pdf"
