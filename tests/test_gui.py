@@ -364,6 +364,7 @@ def test_status_bar_zoom_box_layers_and_measurements_panel(win, tmp_path):
     assert w.cv.zoom < 96 / 72 * 2
     w.cv.goto_page(2); assert w.lbl_page.text() == "Page 3 of 3" and w.page_spin.value() == 3
     # measurements panel
+    w.show_panel("Measurements")
     w.doc.add_count(0, (5, 5), group="Door"); w.doc.add_count(0, (9, 9), group="Door"); w._after_change()
     rows = [[w.meas_table.item(r, c).text() for c in range(4)] for r in range(w.meas_table.rowCount())]
     assert rows == [["Door", "2", "2", "ea"]]
@@ -411,6 +412,7 @@ def test_markups_refresh_and_selection_measure_each_markup_once(win, monkeypatch
     calls = []
     real = Markup.measurement
     monkeypatch.setattr(Markup, "measurement", lambda self: calls.append(self.xref) or real(self))
+    w.show_panel("Measurements")
     w.mk_status.setCurrentIndex(w.mk_status.count() - 1)   # a status filter hides every row, but not the totals
     calls.clear()
     w.refresh_markups()
@@ -454,9 +456,9 @@ def test_custom_columns_in_the_list_and_the_properties_panel(win, monkeypatch):
     assert w.doc.markups()[0].custom() == {"Cost": 1250.5, "Trade": "Plumbing"}
     row = [w.mk_table.item(0, c).text() for c in range(w.mk_table.columnCount())]
     assert row[-2:] == ["1250.5", "Plumbing"]
-    w.mk_filter.setText("plumb"); assert w.mk_table.rowCount() == 1
-    w.mk_filter.setText("nothing"); assert w.mk_table.rowCount() == 0
-    w.mk_filter.setText("")
+    w.mk_filter.setText("plumb"); w.mk_filter.returnPressed.emit(); assert w.mk_table.rowCount() == 1
+    w.mk_filter.setText("nothing"); w.mk_filter.returnPressed.emit(); assert w.mk_table.rowCount() == 0
+    w.mk_filter.setText(""); w.mk_filter.returnPressed.emit()
     cost.setText("abc"); cost.editingFinished.emit()                               # a bad number is refused with a message
     assert "needs a number" in w.statusBar().currentMessage() and w.doc.markups()[0].custom()["Cost"] == 1250.5
     assert cost.text() == "1250.5"                                                 # and the field shows the stored value again
@@ -816,3 +818,83 @@ def test_a_signed_pdf_that_must_be_saved_as_a_copy_skips_the_signed_question(sig
     w.save()
     assert seen["asked"] == 0 and Path(signed_pdf).read_bytes() == original
     assert w.doc.path == copy and len(Document(copy).markups()) == 1
+
+
+# ---------- Markups List refresh cost (issue #10) ----------
+def _count_refreshes(monkeypatch):
+    """Each Markups List refresh measures the markups once (Document.measured). Returns the call list."""
+    calls = []
+    real = Document.measured
+    monkeypatch.setattr(Document, "measured", lambda self, *a: calls.append(1) or real(self, *a))
+    return calls
+
+
+def _settle(timer):
+    while timer.isActive():
+        QtTest.QTest.qWait(20)
+
+
+def test_typing_in_the_filter_rebuilds_the_list_once(win, monkeypatch):
+    w = win
+    w.doc.add_rect(0, fitz.Rect(100, 200, 200, 260)); w.doc.add_rect(0, fitz.Rect(300, 200, 400, 260))
+    w.doc.markups()[0].set_comment("electrical"); w._after_change()
+    assert w.mk_table.rowCount() == 2
+    calls = _count_refreshes(monkeypatch)
+    QtTest.QTest.keyClicks(w.mk_filter, "electrical")        # 10 characters
+    assert calls == [] and w.mk_table.rowCount() == 2       # nothing rebuilt while typing
+    _settle(w.mk_filter_timer)
+    assert calls == [1] and w.mk_table.rowCount() == 1
+    QtTest.QTest.keyClicks(w.mk_filter, "x")
+    QtTest.QTest.keyClick(w.mk_filter, QtCore.Qt.Key_Return)  # Enter applies the filter at once
+    assert calls == [1, 1] and w.mk_table.rowCount() == 0 and not w.mk_filter_timer.isActive()
+    w.mk_status.setCurrentIndex(1)                            # the status filter stays immediate
+    assert calls == [1, 1, 1]
+
+
+def test_hidden_markups_list_is_not_rebuilt_until_shown(win, monkeypatch, app):
+    w = win
+    w.show_panel("Measurements")
+    w.doc.add_length(0, [(10, 100), (160, 100)]); w._after_change()
+    assert w.mk_table.rowCount() == 1 and w.meas_table.rowCount() == 1
+    w.d_markups.hide(); w.right_dock.hide(); app.processEvents()
+    calls = _count_refreshes(monkeypatch)
+    w.doc.delete(w.doc.markups()[0]); w.doc.add_rect(0, fitz.Rect(100, 200, 200, 260)); w._after_change()
+    assert calls == []
+    assert w.mk_table.rowCount() == 0 and w._rows == []       # no stale rows to select while hidden
+    w.d_markups.show(); app.processEvents()
+    assert calls == [1] and w.mk_table.rowCount() == 1 and w._rows[0].kind == w.doc.markups()[0].kind
+    assert "no measurements yet" in w.totals.text()
+    w.right_dock.show(); app.processEvents()                  # the Measurements table is filled once its dock is back
+    assert calls == [1, 1] and w.meas_table.rowCount() == 0
+    w._after_change(); w.d_markups.show(); app.processEvents()
+    assert calls == [1, 1, 1]                                 # shown and up to date: no extra rebuild
+    w.show_panel("Properties"); w.doc.add_length(0, [(10, 300), (160, 300)]); w._after_change()
+    assert w.meas_table.rowCount() == 0                       # the Measurements tab is behind another tab
+    w.show_panel("Measurements")
+    assert calls == [1, 1, 1, 1, 1] and w.meas_table.rowCount() == 1
+
+
+def test_showing_the_measurements_tab_keeps_the_markups_list_selection(win, app):
+    """Only the stale part is filled: the Markups List the user is working in is not rebuilt."""
+    w = win
+    w.show_panel("Properties"); w.doc.add_length(0, [(10, 100), (160, 100)]); w._after_change()
+    w.mk_table.selectRow(0); app.processEvents()
+    rows_before = w._rows
+    w.show_panel("Measurements"); app.processEvents()
+    assert w.meas_table.rowCount() == 1
+    assert w._rows is rows_before and [r.row() for r in w.mk_table.selectionModel().selectedRows()] == [0]
+
+
+def test_edits_do_not_read_sheets_while_the_sheets_panel_is_not_shown(win, monkeypatch):
+    w = win
+    calls = []
+    real = Document.sheet_table
+    monkeypatch.setattr(Document, "sheet_table", lambda self, *a, **k: calls.append(1) or real(self, *a, **k))
+    w.show_panel("Thumbnails")
+    w.doc.add_rect(0, fitz.Rect(100, 200, 200, 260)); w._after_change()
+    assert calls == []
+    w.show_panel("Sheets")
+    calls.clear(); w._after_change()
+    assert calls == [1]
+    w.left_dock.hide(); calls.clear(); w._after_change()
+    assert calls == []

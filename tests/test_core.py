@@ -195,3 +195,35 @@ def test_malformed_measure_is_listed_as_non_measurement(pdf, raw):
     assert m.measurement() is None
     assert doc.takeoff() == {}
     assert doc.takeoff_by_subject() == {}
+
+
+def _count_markups_built(monkeypatch):
+    """Replace core.Markup with a subclass that counts the objects built. Returns the list of page numbers."""
+    import openrevu.core as core
+    built = []
+
+    class Counting(core.Markup):
+        def __init__(self, annot, page_no, *a, **k):
+            built.append(page_no)
+            super().__init__(annot, page_no, *a, **k)
+    monkeypatch.setattr(core, "Markup", Counting)
+    return built
+
+
+def test_markups_page_walks_only_that_page(pdf, monkeypatch):
+    """Issue #10: markups(page=) and markup_at must not build a Markup for every annotation of every page."""
+    d = Document(pdf)
+    d.add_rect(0, fitz.Rect(100, 100, 200, 200))
+    for i in range(20):
+        d.add_rect(1, fitz.Rect(10 + i, 10, 60 + i, 60))
+    built = _count_markups_built(monkeypatch)
+    assert [m.page_no for m in d.markups(page=0)] == [0] and built == [0]
+    built.clear()
+    assert len(d.markups(page=1)) == 20 and set(built) == {1}
+    built.clear()
+    hit = d.markup_at(0, (150, 150))
+    assert hit is not None and hit.page_no == 0 and built == [0]       # page 1's 20 markups are never visited
+    built.clear()
+    assert d.markup_at(0, (500, 500)) is None and built == [0]
+    for bad in (-1, d.page_count):                                     # no such page: nothing there, as before
+        assert d.markups(page=bad) == [] and d.markup_at(bad, (150, 150)) is None
