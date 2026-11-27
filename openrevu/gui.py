@@ -1072,10 +1072,15 @@ class Main(DocumentOps, W.QMainWindow):
         if not self._need_doc():
             return
         from PyQt5 import QtPrintSupport as P
-        from .printing import print_document
+        from .printing import chosen_pages, print_document
         pr = P.QPrinter(P.QPrinter.HighResolution)
-        if P.QPrintDialog(pr, self).exec_() != W.QDialog.Accepted:
+        pd = P.QPrintDialog(pr, self)
+        pd.setOption(P.QPrintDialog.PrintPageRange)
+        pd.setOption(P.QPrintDialog.PrintCurrentPage)
+        pd.setMinMax(1, self.doc.page_count)
+        if pd.exec_() != W.QDialog.Accepted:
             return
+        pages = chosen_pages(pr, self.doc.page_count, self.cv.current_page())
         dlg = W.QProgressDialog("Printing…", "Cancel", 0, 0, self)
         dlg.setWindowTitle("Print")
         dlg.setWindowModality(QtCore.Qt.WindowModal)   # setValue() then keeps the window and Cancel responsive
@@ -1086,11 +1091,11 @@ class Main(DocumentOps, W.QMainWindow):
             dlg.setValue(done)
             return not dlg.wasCanceled()
         try:
-            ok = print_document(pr, self.doc, progress)
+            ok = print_document(pr, self.doc, progress, pages)
         finally:
             dlg.close()
             dlg.deleteLater()
-        self.statusBar().showMessage(f"Printed {self.doc.page_count} page(s)." if ok else "Printing cancelled.")
+        self.statusBar().showMessage(f"Printed {len(pages)} page(s)." if ok else "Printing cancelled.")
 
     # ---------- tools & the Properties toolbar ----------
     def set_tool(self, name, announce=True):

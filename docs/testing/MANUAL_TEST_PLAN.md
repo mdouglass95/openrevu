@@ -297,6 +297,8 @@ arrives. **Copy text**: drag over text, paste in a text editor: the text arrives
 
 **T46b Print.** Open `plan_v1.pdf` and add a markup. Press Ctrl+P and print to a PDF file (**Print to File (PDF)** on Linux,
 **Microsoft Print to PDF** on Windows, **PDF > Save as PDF** on macOS). Open the result. Expect 3 pages, each sheet filling the paper and sharp, with the markup in place.
+Print again with **Pages from 2 to 3**: expect 2 pages, the status bar says "Printed 2 page(s).". Go to page 3 and print with
+**Current page**: expect 1 page, page 3.
 Print `many_pages.pdf` the same way. Expect a **Print** window with a progress bar and **Cancel** after half a second.
 Press Cancel: printing stops within a second, and the status bar says "Printing cancelled.".
 If a large-format printer or a plotter driver is installed, print a sheet on ARCH E (36 x 48 in) paper at its highest
