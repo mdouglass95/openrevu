@@ -5,9 +5,11 @@ A snapshot is removed when the document is saved or closed. After a crash the sn
 and the next start offers to restore them. A snapshot of a password-protected document is encrypted."""
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import os
 import sys
+import threading
 import time
 import uuid
 
@@ -68,7 +70,43 @@ def write(doc_id: str, data: bytes, original_path: str | None, title: str, encry
         os.replace(tmp, path)
 
 
+# One worker thread writes all snapshots, one after another. Two writes to the same files therefore never overlap
+# (os.replace onto a file that another thread is writing fails on Windows). Python joins the worker at exit.
+_writer = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="openrevu-autosave")
+_lock = threading.Lock()
+_pending: dict[str, concurrent.futures.Future] = {}     # document id -> its latest queued or running write
+
+
+def write_later(doc_id: str, data: bytes, original_path: str | None, title: str, encrypted: bool) -> concurrent.futures.Future:
+    """Queue write() on the worker thread and return its Future. The Future raises what write() raised."""
+    def job():
+        write(doc_id, data, original_path, title, encrypted)    # looked up at run time, so tests can replace write()
+
+    with _lock:
+        fut = _pending[doc_id] = _writer.submit(job)
+
+    def forget(f):
+        with _lock:
+            if _pending.get(doc_id) is f:
+                del _pending[doc_id]
+    fut.add_done_callback(forget)
+    return fut
+
+
+def wait(doc_id: str | None = None) -> None:
+    """Block until the queued writes (of one document, or of all) have finished."""
+    with _lock:
+        futs = list(_pending.values()) if doc_id is None else [f for f in (_pending.get(doc_id),) if f]
+    concurrent.futures.wait(futs)
+
+
 def remove(doc_id: str) -> None:
+    """Remove a document's snapshot. A write still queued for it is dropped and a running one is waited for,
+    so no snapshot of this document appears after remove() returns."""
+    with _lock:
+        fut = _pending.get(doc_id)
+    if fut is not None and not fut.cancel():
+        concurrent.futures.wait([fut])
     for p in _paths(doc_id):
         try:
             os.remove(p)

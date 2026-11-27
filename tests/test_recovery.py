@@ -39,6 +39,14 @@ def choose(monkeypatch, label):
     monkeypatch.setattr(QtWidgets.QMessageBox, "clickedButton", lambda self: getattr(self, "_clicked", None))
 
 
+def autosave(w):
+    """One autosave tick, then wait until its background writes have ended and their results reached the window."""
+    n = w.autosave_now()
+    recovery.wait()
+    QtWidgets.QApplication.processEvents()
+    return n
+
+
 def crash(w):
     """Leave without cleanup, as a crash does: no close_tab, no removal of snapshots."""
     w.autosave_timer.stop()
@@ -54,12 +62,12 @@ def as_dead_session(isolated):
 
 def test_unmodified_documents_are_not_snapshotted_and_modified_ones_are(app, pdf, isolated_recovery_dir):
     w = Main(pdf); app.processEvents()
-    assert w.autosave_now() == 0 and files(isolated_recovery_dir) == []
+    assert autosave(w) == 0 and files(isolated_recovery_dir) == []
     w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change()
-    assert w.autosave_now() == 1 and len(files(isolated_recovery_dir)) == 2           # one .pdf and one .json
-    assert w.autosave_now() == 0                                                       # nothing changed since
+    assert autosave(w) == 1 and len(files(isolated_recovery_dir)) == 2           # one .pdf and one .json
+    assert autosave(w) == 0                                                       # nothing changed since
     w.doc.add_rect(0, fitz.Rect(70, 70, 90, 90)); w._after_change()
-    assert w.autosave_now() == 1
+    assert autosave(w) == 1
     snap = [f for f in files(isolated_recovery_dir) if f.endswith(".pdf")][0]
     assert len(Document(os.path.join(isolated_recovery_dir, snap)).markups()) == 2     # the latest state
     assert not [f for f in files(isolated_recovery_dir) if f.endswith(".tmp")]         # writes are completed
@@ -72,23 +80,23 @@ def test_an_autosave_error_of_any_kind_goes_to_the_status_bar(app, pdf, isolated
     def broken(self):
         raise RuntimeError("document closed")
     monkeypatch.setattr(Document, "_snapshot", broken)
-    assert w.autosave_now() == 0
+    assert autosave(w) == 0
     assert "Autosave failed" in w.statusBar().currentMessage()
     assert files(isolated_recovery_dir) == []
 
 
 def test_saving_or_discarding_removes_the_snapshot(app, pdf, tmp_path, isolated_recovery_dir, monkeypatch):
     w = Main(pdf)
-    w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change(); w.autosave_now()
+    w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change(); autosave(w)
     assert len(files(isolated_recovery_dir)) == 2
     w.save()
     assert files(isolated_recovery_dir) == []
-    w.doc.add_rect(0, fitz.Rect(70, 70, 90, 90)); w._after_change(); w.autosave_now()
+    w.doc.add_rect(0, fitz.Rect(70, 70, 90, 90)); w._after_change(); autosave(w)
     assert len(files(isolated_recovery_dir)) == 2
     monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(lambda *a, **k: QtWidgets.QMessageBox.Discard))
     w.close_tab(0)
     assert files(isolated_recovery_dir) == []
-    w2 = Main(pdf); w2.doc.add_rect(0, fitz.Rect(1, 1, 9, 9)); w2._after_change(); w2.autosave_now()
+    w2 = Main(pdf); w2.doc.add_rect(0, fitz.Rect(1, 1, 9, 9)); w2._after_change(); autosave(w2)
     monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(tmp_path / "copy.pdf"), "")))
     w2.save_as()
     assert files(isolated_recovery_dir) == [] and os.path.exists(tmp_path / "copy.pdf")
@@ -97,7 +105,7 @@ def test_saving_or_discarding_removes_the_snapshot(app, pdf, tmp_path, isolated_
 def test_crash_then_restart_restores_the_unsaved_work(app, pdf, tmp_path, isolated_recovery_dir, monkeypatch):
     w = Main(pdf)
     w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w.doc.add_length(0, [(0, 100), (100, 100)]); w.doc.set_scale(__import__("openrevu.core", fromlist=["Scale"]).Scale("m", 0.1))
-    w._after_change(); w.autosave_now(); crash(w)
+    w._after_change(); autosave(w); crash(w)
     original_bytes = open(pdf, "rb").read()
     as_dead_session(isolated_recovery_dir)
     w2 = Main(); choose(monkeypatch, "Recover")
@@ -106,7 +114,7 @@ def test_crash_then_restart_restores_the_unsaved_work(app, pdf, tmp_path, isolat
     d = w2.doc
     assert d.path is None and d.modified and len(d.markups()) == 2 and d.scale.unit == "m"       # the work and the scale are back
     assert len(files(isolated_recovery_dir)) == 2                                                # kept until the work is saved or closed
-    assert w2.autosave_now() == 1 and recovery.entries({w2.doc.recovery_id}) == []               # re-written under this session
+    assert autosave(w2) == 1 and recovery.entries({w2.doc.recovery_id}) == []               # re-written under this session
     assert open(pdf, "rb").read() == original_bytes                                              # the original file is untouched
     shown = {}
     monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda p, t, start, *a, **k: (shown.update(start=start) or str(tmp_path / "restored.pdf"), "")))
@@ -116,7 +124,7 @@ def test_crash_then_restart_restores_the_unsaved_work(app, pdf, tmp_path, isolat
 
 
 def test_discard_and_ask_later(app, pdf, isolated_recovery_dir, monkeypatch):
-    w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change(); w.autosave_now(); crash(w)
+    w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change(); autosave(w); crash(w)
     as_dead_session(isolated_recovery_dir)
     w2 = Main(); choose(monkeypatch, "Ask me later")
     assert w2.offer_recovery() == 0 and len(files(isolated_recovery_dir)) == 2 and w2.tabs.count() == 0     # kept for next time
@@ -126,7 +134,7 @@ def test_discard_and_ask_later(app, pdf, isolated_recovery_dir, monkeypatch):
 
 
 def test_a_live_session_and_our_own_snapshots_are_not_offered(app, pdf, isolated_recovery_dir):
-    w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change(); w.autosave_now()
+    w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change(); autosave(w)
     assert recovery.entries({w.doc.recovery_id}) == []                                 # a document that is open here
     for name in os.listdir(isolated_recovery_dir):
         if name.endswith(".json"):
@@ -140,7 +148,7 @@ def test_protected_documents_are_never_written_in_plain(app, pdf, tmp_path, isol
     enc = str(tmp_path / "e.pdf"); Document(pdf).save_encrypted(enc, "secret")
     w = Main()
     w.open(enc, "secret")
-    w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change(); w.autosave_now(); crash(w)
+    w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change(); autosave(w); crash(w)
     snap = [f for f in files(isolated_recovery_dir) if f.endswith(".pdf")][0]
     assert fitz.open(os.path.join(isolated_recovery_dir, snap)).needs_pass                 # encrypted on disk
     assert json.load(open(os.path.join(isolated_recovery_dir, [f for f in files(isolated_recovery_dir) if f.endswith(".json")][0])))["encrypted"]
@@ -153,7 +161,7 @@ def test_protected_documents_are_never_written_in_plain(app, pdf, tmp_path, isol
 def test_wrong_password_skips_that_document_only(app, pdf, tmp_path, isolated_recovery_dir, monkeypatch):
     enc = str(tmp_path / "e.pdf"); Document(pdf).save_encrypted(enc, "secret")
     w = Main(); w.open(enc, "secret"); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change()
-    w.open(pdf); w.doc.add_rect(0, fitz.Rect(5, 5, 20, 20)); w._after_change(); w.autosave_now(); crash(w)
+    w.open(pdf); w.doc.add_rect(0, fitz.Rect(5, 5, 20, 20)); w._after_change(); autosave(w); crash(w)
     as_dead_session(isolated_recovery_dir)
     w2 = Main(); choose(monkeypatch, "Recover")
     monkeypatch.setattr(QtWidgets.QInputDialog, "getText", staticmethod(lambda *a, **k: ("", False)))   # the user cancels the password
@@ -179,10 +187,12 @@ def test_damaged_snapshots_are_cleaned_up_not_offered(app, isolated_recovery_dir
 
 def test_a_full_disk_does_not_interrupt_work(app, pdf, isolated_recovery_dir, monkeypatch):
     w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change()
+    real = recovery.write
     monkeypatch.setattr(recovery, "write", lambda *a, **k: (_ for _ in ()).throw(OSError("No space left on device")))
-    assert w.autosave_now() == 0 and "Autosave failed" in w.statusBar().currentMessage()
-    monkeypatch.undo()
-    assert w.autosave_now() == 1
+    autosave(w)
+    assert "Autosave failed: No space left on device" in w.statusBar().currentMessage() and files(isolated_recovery_dir) == []
+    monkeypatch.setattr(recovery, "write", real)     # not monkeypatch.undo(): that would also undo the isolated recovery folder
+    assert autosave(w) == 1 and len(files(isolated_recovery_dir)) == 2       # the failed write is retried at the next tick
 
 
 def test_timer_runs_autosave(app, pdf, isolated_recovery_dir, monkeypatch):
@@ -210,7 +220,7 @@ def test_odd_descriptions_are_removed_and_never_break_recovery(app, isolated_rec
 
 def test_a_snapshot_with_our_own_pid_but_an_unknown_id_is_offered(app, pdf, isolated_recovery_dir):
     """A restarted process (a container, a reused pid) must still see what its predecessor left."""
-    w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change(); w.autosave_now()
+    w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change(); autosave(w)
     assert recovery.entries({w.doc.recovery_id}) == [] and len(recovery.entries()) == 1          # open here, or not
     assert len(recovery.entries({"someotherid"})) == 1                                           # same pid, not ours: offered
 
@@ -227,10 +237,97 @@ def test_orphan_files_are_cleaned_only_when_old(app, isolated_recovery_dir):
 
 
 def test_recovered_work_survives_a_second_crash(app, pdf, tmp_path, isolated_recovery_dir, monkeypatch):
-    w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change(); w.autosave_now(); crash(w)
+    w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change(); autosave(w); crash(w)
     as_dead_session(isolated_recovery_dir)
     w2 = Main(); choose(monkeypatch, "Recover"); assert w2.offer_recovery() == 1
     crash(w2)                                                         # the new session dies before its first autosave
     as_dead_session(isolated_recovery_dir)
     w3 = Main(); choose(monkeypatch, "Recover")
     assert w3.offer_recovery() == 1 and len(w3.doc.markups()) == 1    # the work is still there
+
+
+# ---------- autosave off the GUI thread (#9) ----------
+def slow_write(monkeypatch, seconds=0.5):
+    """Make the low-level snapshot write slow, as on a 250 MB document."""
+    real = recovery.write
+
+    def write(*a, **k):
+        import time
+        time.sleep(seconds)
+        real(*a, **k)
+    monkeypatch.setattr(recovery, "write", write)
+
+
+def test_autosave_writes_the_snapshot_in_the_background(app, pdf, isolated_recovery_dir, monkeypatch):
+    import time
+    w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change()
+    slow_write(monkeypatch)
+    t0 = time.perf_counter()
+    assert w.autosave_now() == 1
+    assert time.perf_counter() - t0 < 0.25                     # the GUI thread does not wait for the disk
+    recovery.wait()
+    assert len(files(isolated_recovery_dir)) == 2
+
+
+@pytest.mark.parametrize("started", [False, True])
+def test_closing_a_document_while_its_snapshot_is_written_leaves_no_snapshot(app, pdf, isolated_recovery_dir, monkeypatch, started):
+    """A late write would look like a crash of this session at the next start."""
+    import threading
+    w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change()
+    slow_write(monkeypatch, 0.3)
+    gate = threading.Event()
+    if not started:                                            # keep the writer busy, so the snapshot is still queued
+        recovery.write_later("busy", b"x", None, "busy", False)
+    real = recovery.write
+    monkeypatch.setattr(recovery, "write", lambda *a, **k: (gate.set(), real(*a, **k)))
+    assert w.autosave_now() == 1
+    if started:
+        assert gate.wait(2)                                    # the write is running now
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(lambda *a, **k: QtWidgets.QMessageBox.Discard))
+    w.close_tab(0)
+    recovery.wait(); app.processEvents()
+    assert not [f for f in files(isolated_recovery_dir) if not f.startswith("busy")]
+
+
+def test_a_background_write_error_reaches_the_status_bar(app, pdf, isolated_recovery_dir, monkeypatch):
+    import time
+    w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change()
+    monkeypatch.setattr(recovery, "write", lambda *a, **k: (_ for _ in ()).throw(PermissionError("read-only folder")))
+    w.autosave_now()
+    t0 = time.time()                                           # no explicit wait: the window learns it by itself
+    while time.time() - t0 < 3 and "Autosave failed" not in w.statusBar().currentMessage():
+        app.processEvents(); time.sleep(0.01)
+    assert w.statusBar().currentMessage() == "Autosave failed: read-only folder"
+
+
+def test_a_document_is_not_snapshotted_again_while_its_write_is_pending(app, pdf, isolated_recovery_dir, monkeypatch):
+    w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change()
+    slow_write(monkeypatch, 0.3)
+    snaps = []
+    real = Document._snapshot
+    monkeypatch.setattr(Document, "_snapshot", lambda self: snaps.append(1) or real(self))
+    assert w.autosave_now() == 1
+    w.doc.add_rect(0, fitz.Rect(70, 70, 90, 90)); w._after_change()
+    assert w.autosave_now() == 0 and len(snaps) == 1           # the first write is still running
+    assert autosave(w) == 0                                    # it ends; the changed document waits for the next tick
+    assert autosave(w) == 1 and len(snaps) == 2
+    snap = [f for f in files(isolated_recovery_dir) if f.endswith(".pdf")][0]
+    assert len(Document(os.path.join(isolated_recovery_dir, snap)).markups()) == 2
+
+
+def test_autosave_waits_while_a_mouse_button_is_down(app, pdf, isolated_recovery_dir, monkeypatch):
+    import time
+    from PyQt5 import QtCore
+    from openrevu import gui
+    w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change()
+    monkeypatch.setattr(gui, "AUTOSAVE_RETRY_MS", 50)
+    monkeypatch.setattr(QtWidgets.QApplication, "mouseButtons", staticmethod(lambda: QtCore.Qt.LeftButton))
+    assert w.autosave_now() == 0 and w.autosave_now() == 0     # mid-drag: nothing is serialized
+    recovery.wait(); app.processEvents()
+    assert files(isolated_recovery_dir) == []
+    monkeypatch.setattr(QtWidgets.QApplication, "mouseButtons", staticmethod(lambda: QtCore.Qt.NoButton))
+    t0 = time.time()                                           # the button is released: the retry writes the snapshot
+    while time.time() - t0 < 3 and not files(isolated_recovery_dir):
+        app.processEvents(); time.sleep(0.01)
+    recovery.wait()
+    assert len(files(isolated_recovery_dir)) == 2

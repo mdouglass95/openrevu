@@ -2,6 +2,7 @@
 import fitz
 import pytest
 
+from openrevu import recovery
 from openrevu.core import Document
 
 PRINT_ONLY = fitz.PDF_PERM_PRINT | fitz.PDF_PERM_ACCESSIBILITY   # no annotate, no modify
@@ -150,6 +151,7 @@ def test_an_autosave_snapshot_of_a_restricted_pdf_keeps_its_permissions(gui, tmp
     gui.open(src)
     gui.doc.add_rect(0, fitz.Rect(10, 10, 50, 50)); gui._after_change()
     assert gui.autosave_now() == 1
+    recovery.wait()                                           # the snapshot is written on a background thread
     snap = next(isolated_recovery_dir.glob("*.pdf"))
     assert user_permissions(str(snap)) == user_permissions(src)
     assert Document(str(snap)).restricted                     # a recovered copy is still restricted
