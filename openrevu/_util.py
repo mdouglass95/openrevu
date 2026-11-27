@@ -23,7 +23,7 @@ def replace_file(path: str, write) -> None:
         except OSError as e:
             raise OSError(e.errno, f"Could not replace the file; is it open in another program? ({e.strerror})",
                           path) from e
-    except BaseException:
+    except Exception:
         with contextlib.suppress(OSError):
             os.remove(tmp)
         raise

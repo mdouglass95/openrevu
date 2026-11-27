@@ -255,3 +255,10 @@ def test_a_failed_snapshot_write_leaves_no_temporary_file(isolated_recovery_dir,
     with pytest.raises(OSError):
         recovery.write("abc123", b"%PDF-1.7", None, "t", False)
     assert [f for f in files(isolated_recovery_dir) if f.endswith(".tmp")] == []
+
+
+def test_a_failed_snapshot_replace_goes_to_the_status_bar(app, pdf, isolated_recovery_dir, monkeypatch):
+    w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change()
+    monkeypatch.setattr(os, "replace", lambda *a: (_ for _ in ()).throw(PermissionError(13, "Access is denied")))
+    assert w.autosave_now() == 0 and "Autosave failed" in w.statusBar().currentMessage()
+    assert [f for f in files(isolated_recovery_dir) if f.endswith(".tmp")] == []
