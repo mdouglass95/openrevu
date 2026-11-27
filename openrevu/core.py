@@ -1356,9 +1356,10 @@ class Document(SheetOps, PageOps):
         return a
 
     # --- querying / editing ---
-    def markups(self, include_children=False):
+    def markups(self, include_children=False, page=None):
+        """Top-level markups of every page, or only of page number `page`."""
         out = []
-        for pno, page in enumerate(self.doc):
+        for pno, page in enumerate(self.doc) if page is None else ((page, self.doc[page]),):
             for a in page.annots() or []:
                 if a.type[1] in ("Popup", "Link", "Widget"):
                     continue
@@ -1370,7 +1371,7 @@ class Document(SheetOps, PageOps):
     def markup_at(self, pno, point, tol=4):
         """Topmost markup on page whose bounds contain the point (for selection)."""
         pt = fitz.Point(point)
-        hits = [m for m in self.markups() if m.page_no == pno and (m.rect + (-tol, -tol, tol, tol)).contains(pt)]
+        hits = [m for m in self.markups(page=pno) if (m.rect + (-tol, -tol, tol, tol)).contains(pt)]
         return hits[-1] if hits else None
 
     @_mutates
