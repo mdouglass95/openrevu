@@ -989,6 +989,28 @@ class Main(DocumentOps, W.QMainWindow):
         box.exec_()
         return {save_as: "save_as", anyway: "anyway"}.get(box.clickedButton(), "cancel")
 
+    def _overwrites_signed_original(self, d: Document, path: str) -> bool:
+        """True if writing `path` would rewrite `d`'s digitally signed file, whose signatures are still intact."""
+        if not (d.signed and d.path and path) or d.recovery_id in self._rewritten:
+            return False
+        try:
+            return os.path.samefile(path, d.path)
+        except OSError:   # one of them does not exist
+            return os.path.normcase(os.path.abspath(path)) == os.path.normcase(os.path.abspath(d.path))
+
+    def _ask_pdf_path(self, title: str, start: str = "", d: Document | None = None) -> str:
+        """Ask where to write a PDF made from `d` (default: the current document). If the user picks its signed original,
+        warn first (see _ask_save_signed); "Save As…" asks for another file. Returns "" if cancelled."""
+        while True:
+            p, _ = W.QFileDialog.getSaveFileName(self, title, start, "PDF (*.pdf)")
+            if not self._overwrites_signed_original(d or self.doc, p):
+                return p
+            choice = self._ask_save_signed()
+            if choice == "anyway":
+                return p
+            if choice == "cancel":
+                return ""
+
     def _save(self, d: Document) -> bool:
         in_place = bool(d.path) and not d.save_as_required
         if in_place and d.signed and d.recovery_id not in self._rewritten:
@@ -1003,7 +1025,7 @@ class Main(DocumentOps, W.QMainWindow):
                 title = "Save a copy (this PDF restricts editing)" if d.restricted else "Save"
                 # a signed document's suggested path is its signed original: overwriting it is what the warning is about
                 start = "" if d.signed else getattr(d, "suggested_path", None) or ""
-                p, _ = W.QFileDialog.getSaveFileName(self, title, start, "PDF (*.pdf)")
+                p = self._ask_pdf_path(title, start, d)
                 if not p:
                     return False
                 d.save(p)
@@ -1031,7 +1053,7 @@ class Main(DocumentOps, W.QMainWindow):
 
     def save_as(self):
         if self._need_doc():
-            p, _ = W.QFileDialog.getSaveFileName(self, "Save As", "", "PDF (*.pdf)")
+            p = self._ask_pdf_path("Save As")
             if p:
                 self.cv.select(None)
                 if self._run(self.doc.save, p, msg=f"Saved {p}"):
@@ -1044,13 +1066,13 @@ class Main(DocumentOps, W.QMainWindow):
             return
         pw, ok = W.QInputDialog.getText(self, "Encrypt", "Password to open the copy:", W.QLineEdit.Password)
         if ok and pw:
-            p, _ = W.QFileDialog.getSaveFileName(self, "Save encrypted copy", "", "PDF (*.pdf)")
+            p = self._ask_pdf_path("Save encrypted copy")
             if p:
                 self._run(self.doc.save_encrypted, p, pw, msg="Encrypted copy saved")
 
     def optimize(self):
         if self._need_doc():
-            p, _ = W.QFileDialog.getSaveFileName(self, "Optimized copy", "", "PDF (*.pdf)")
+            p = self._ask_pdf_path("Optimized copy")
             if p:
                 r = self._run(self.doc.optimize, p)
                 if r:
@@ -1520,7 +1542,7 @@ class Main(DocumentOps, W.QMainWindow):
         mode, ok = W.QInputDialog.getItem(self, "Markup Summary", "Include a picture of each markup?", ["Yes", "No"], 0, False)
         if not ok:
             return
-        p, _ = W.QFileDialog.getSaveFileName(self, "Save the Markup Summary", "markup-summary.pdf", "PDF (*.pdf)")
+        p = self._ask_pdf_path("Save the Markup Summary", "markup-summary.pdf")
         if p:
             n = self._run(self.doc.export_markup_summary, p, mode == "Yes")
             if n is not None:
