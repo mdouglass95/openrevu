@@ -400,6 +400,28 @@ def test_pan_tool_drags_the_view(win):
     assert w.cv.viewport().cursor().shape() == QtCore.Qt.OpenHandCursor
 
 
+def test_markups_refresh_and_selection_measure_each_markup_once(win, monkeypatch):
+    """Issue #40: the list, the per-subject table and the totals each called measurement() on every markup."""
+    from openrevu.core import Markup
+    w = win
+    for y in (100, 150, 200):
+        w.doc.add_length(0, [(10, y), (160, y)])
+    w.doc.add_area(0, [(10, 300), (100, 300), (100, 400)])
+    w.doc.add_rect(0, fitz.Rect(300, 300, 350, 350))
+    calls = []
+    real = Markup.measurement
+    monkeypatch.setattr(Markup, "measurement", lambda self: calls.append(self.xref) or real(self))
+    w.mk_status.setCurrentIndex(w.mk_status.count() - 1)   # a status filter hides every row, but not the totals
+    calls.clear()
+    w.refresh_markups()
+    assert len(calls) == len(w.doc.markups()) == 5 and len(set(calls)) == 5
+    assert w.mk_table.rowCount() == 0
+    assert w.meas_table.rowCount() == 2 and "Length" in w.totals.text() and "Area" in w.totals.text()
+    calls.clear()
+    w.cv.selected = w.doc.markups()[0]; w._load_props()
+    assert len(calls) == 1
+
+
 def test_feet_inches_menu_toggle_redraws_labels_and_shows_in_the_list(win):
     from openrevu.core import Scale
     w = win
