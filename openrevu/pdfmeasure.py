@@ -5,9 +5,11 @@ A rectilinear /Measure (/Subtype /RL) holds number-format arrays; the first entr
 PDF points into the unit /U. Measurement annotations carry an /IT intent and, in Revu and Acrobat output, their own
 /Measure dictionary.
 
-This module only reads the PDF. It returns plain (unit, factor) pairs; core.py turns them into Scales.
+This module reads and writes these structures as plain (unit, factor) pairs; core.py turns them into Scales.
 """
 from __future__ import annotations
+
+import hashlib
 
 import pymupdf as fitz
 
@@ -17,8 +19,13 @@ from .pdfobject import Reader, Ref
 INTENTS = {("Line", "LineDimension"): "length", ("PolyLine", "PolyLineDimension"): "length",
            ("Polygon", "PolygonDimension"): "area", ("Polygon", "PolygonCount"): "count"}
 INTENT_TYPES = {t for t, _ in INTENTS}
+# Revu's own /MeasurementTypes key, as in RevuTest.pdf (128 count, 129 area, 130 length)
+_REVU_TYPES = {"length": 130, "area": 129, "count": 128}
 # Revu writes feet and inches as ' and ". Other /U strings are taken as OpenRevu unit names; Scale checks them.
 _UNITS = {"'": "ft", '"': "in"}
+_PDF_UNITS = {v: k for k, v in _UNITS.items()}
+# OpenRevu's mark on a page viewport written from the document's default scale (Revu has no document default)
+DEFAULT_KEY = "OR_Default"
 
 
 def parse(text: str):
@@ -75,15 +82,63 @@ def measure(doc: fitz.Document, m):
     return _UNITS.get(u, u), float(c)
 
 
+def _viewport(doc: fitz.Document, item):
+    """(bbox, (unit, factor), default) of one /VP entry, or None if it has no usable /BBox and /Measure."""
+    v = resolve(doc, item)
+    if not isinstance(v, dict):
+        return None
+    bbox, m = v.get("BBox"), measure(doc, v.get("Measure"))
+    if m and isinstance(bbox, list) and len(bbox) == 4 and all(type(n) in (int, float) for n in bbox):
+        return fitz.Rect(bbox).normalize(), m, v.get(DEFAULT_KEY) is True
+    return None
+
+
 def page_viewports(doc: fitz.Document, pno: int):
-    """[(bbox, (unit, factor))] for the /VP viewports of a page that have a /Measure. bbox is in PDF user space."""
+    """[(bbox, (unit, factor), default)] for the /VP viewports of a page that have a /Measure. bbox is in PDF user
+    space; default is True for a page viewport that OpenRevu wrote from the document's default scale."""
     vp = key(doc, doc.page_xref(pno), "VP")
-    out = []
-    for item in vp if isinstance(vp, list) else []:
-        v = resolve(doc, item)
-        if not isinstance(v, dict):
-            continue
-        bbox, m = v.get("BBox"), measure(doc, v.get("Measure"))
-        if m and isinstance(bbox, list) and len(bbox) == 4 and all(type(n) in (int, float) for n in bbox):
-            out.append((fitz.Rect(bbox).normalize(), m))
-    return out
+    return [v for item in (vp if isinstance(vp, list) else []) if (v := _viewport(doc, item))]
+
+
+def _num(v: float) -> str:
+    return f"{v:.10g}"
+
+
+def measure_source(unit: str, factor: float) -> str:
+    """PDF source of a rectilinear /Measure dictionary: `factor` turns PDF points into `unit` (an OpenRevu unit name).
+    /D (distance) and /A (area) count in the units of /X, so their factor is 1. Revu shows the ratio text /R as the
+    scale; it is written in Revu's form, "<paper inches> in = 1 <unit>"."""
+    u = _PDF_UNITS.get(unit, unit)    # unit is one of OpenRevu's names (Scale checks them)
+    au = "sf" if unit == "ft" else "sq " + unit
+    return (f"<</Type/Measure/Subtype/RL/R({_num(1 / (factor * 72))} in = 1 {unit})"
+            f"/X[<</Type/NumberFormat/U({u})/C {_num(factor)}/D 100>>]"
+            f"/D[<</Type/NumberFormat/U({u})/C 1/D 100>>]"
+            f"/A[<</Type/NumberFormat/U({au})/C 1/D 100>>]>>")
+
+
+def set_page_viewports(doc: fitz.Document, pno: int, page, details) -> None:
+    """Replace the measuring viewports in the /VP of a page with `page` (the page scale, or None) and `details` (the
+    viewports of parts of the page), each as page_viewports returns it: (bbox in PDF user space, (unit, factor),
+    default). /VP entries that this module cannot read (other kinds of viewport) are kept.
+
+    Revu ignores a page-scale viewport without an /NM id, and a detail viewport with neither /NM nor /Name. Revu's own
+    page-scale viewport has no /Name and its detail viewports have /Name (Viewport), so these are written the same way."""
+    xref = doc.page_xref(pno)
+    vp = key(doc, xref, "VP")
+    keep = [f"{i.num} 0 R" for i in (vp if isinstance(vp, list) else []) if isinstance(i, Ref) and _viewport(doc, i) is None]
+    new = []
+    for i, ((bbox, m, default), named) in enumerate(([(page, False)] if page else []) + [(d, True) for d in details]):
+        box = " ".join(_num(c) for c in bbox)
+        nm = hashlib.sha1(f"{xref} {i} {box} {m}".encode()).hexdigest()[:16].upper()
+        new.append(f"<</Type/Viewport/BBox[{box}]" + ("/Name(Viewport)" if named else "")
+                   + f"/Measure {measure_source(*m)}/NM({nm})" + (f"/{DEFAULT_KEY} true" if default else "") + ">>")
+    doc.xref_set_key(xref, "VP", f"[{' '.join(new + keep)}]" if new or keep else "null")
+
+
+def mark_measurement(doc: fitz.Document, xref: int, annot_type: str, kind: str, unit: str, factor: float) -> None:
+    """Make a line, polyline or polygon annotation a standard measurement of `kind` ("length", "area"): its /IT intent,
+    its own /Measure dictionary (`factor` turns points into `unit`), and the /MeasurementTypes key that Revu writes."""
+    it = next(i for (t, i), k in INTENTS.items() if t == annot_type and k == kind)
+    doc.xref_set_key(xref, "IT", "/" + it)
+    doc.xref_set_key(xref, "Measure", measure_source(unit, factor))
+    doc.xref_set_key(xref, "MeasurementTypes", str(_REVU_TYPES[kind]))

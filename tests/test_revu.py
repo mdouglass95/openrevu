@@ -128,6 +128,16 @@ def test_pdf_object_reader_reads_references_only_when_asked():
     assert Reader(src).parse()["Measure"] is None     # the Bluebeam tool set importer ignores references
 
 
+def _without_vp(tmp_path) -> Path:
+    """RevuTest.pdf with its /VP removed: an uncalibrated sheet with the same rotated, offset page."""
+    import pymupdf as fitz
+    out = tmp_path / "plain.pdf"
+    with fitz.open(SAMPLE) as d:
+        d.xref_set_key(d.page_xref(0), "VP", "null")
+        d.save(out)
+    return out
+
+
 def _set_revu_page_scale(path, ft_per_pt):
     """Give page 0 a Revu-style page-scale /VP, as Revu writes when the sheet is calibrated there."""
     import pymupdf as fitz
@@ -141,10 +151,7 @@ def _set_revu_page_scale(path, ft_per_pt):
 def test_revu_calibration_after_an_openrevu_save_is_read(tmp_path):
     # the file was saved by OpenRevu before it had any /VP, then calibrated in Revu
     import pymupdf as fitz
-    plain = tmp_path / "plain.pdf"
-    d = fitz.open(SAMPLE)
-    d.xref_set_key(d.page_xref(0), "VP", "null")
-    d.save(plain)
+    plain = _without_vp(tmp_path)
     out = tmp_path / "openrevu.pdf"
     Document(str(plain)).save(str(out))
     _set_revu_page_scale(out, QUARTER_INCH)

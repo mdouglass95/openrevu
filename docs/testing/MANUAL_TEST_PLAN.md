@@ -221,6 +221,15 @@ and one Count Measurement of 7 must match. Change the page scale, save, close an
 Resize the 60' length a little: its value must stay near 60', because it keeps its own Revu scale. Then calibrate the
 saved file again in Revu at a new scale and open it in OpenRevu: expect the new Revu scale.
 
+**T28b OpenRevu scales and measurements in Revu.** Needs Bluebeam Revu. Open a blank sheet in OpenRevu. Set the default scale to
+1/8" = 1'-0" and give page 2 (if any) its own scale of 1/4" = 1'-0". Add a viewport at 1" = 10'. Draw a length, a polylength and an
+area, one of each outside the viewport and one length inside it. Save, and open the file in Revu. Expect Revu to show the same page
+scales and the viewport. Expect the Markups List to show the lengths and the area as measurements, with values that match OpenRevu
+within 0.1%. Perimeters, volumes, counts, diameters, angles and areas with cut-outs stay plain shapes in Revu. Then in OpenRevu,
+recalibrate the page and resize one length: Revu must show the new OpenRevu value. Delete the viewport in Revu, save, and open the file
+in OpenRevu: the viewport must be gone, and the length that was inside it must show the value Revu now gives it (Revu measures it
+again at the page scale).
+
 **T29 Resize a measurement.** Select an area and drag its corner handle. Expect the label and value to change. Resize an angle.
 A **Count** marker must refuse to resize and say why.
 

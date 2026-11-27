@@ -167,8 +167,10 @@ The walls must form a closed shape. If there is a gap, OpenRevu shows an error.
 - Links to a page or a web address (**Link** tool)
 
 A markup is a standard PDF annotation. Other PDF viewers can show it.
-OpenRevu stores its own data (measurement values, scales, and review status) in custom keys.
+OpenRevu stores its own data (measurement values and review status) in custom keys.
 Other viewers ignore these keys.
+Page scales, viewports, lengths, and areas are also written in the standard PDF measurement format that Bluebeam Revu uses.
+OpenRevu reads the scales and measurements that Revu writes.
 
 ### Edit
 
