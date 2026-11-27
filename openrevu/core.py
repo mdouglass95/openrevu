@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import pymupdf as fitz  # PyMuPDF
 
 from . import _journal, pdfmeasure
-from ._util import mutates as _mutates
+from ._util import mutates as _mutates, replace_file
 from .pages import PageOps
 from .sheets import SheetOps
 
@@ -1434,19 +1434,8 @@ class Document(SheetOps, PageOps):
         if "encryption" not in kw:
             kw.update(self._encryption_kwargs())
         if path == self.path:
-            tmp = path + ".tmp"
             # self.doc is memory-backed (see _open), so `path` can be replaced while it stays open.
-            try:
-                self.doc.save(tmp, **kw)
-                try:
-                    os.replace(tmp, path)
-                except OSError as e:
-                    raise OSError(e.errno, f"Could not replace the file; is it open in another program? ({e.strerror})",
-                                  path) from e
-            except Exception:
-                with contextlib.suppress(OSError):
-                    os.remove(tmp)
-                raise
+            replace_file(path, lambda tmp: self.doc.save(tmp, **kw))
         else:
             self.doc.save(path, **kw)
             self.path = path
