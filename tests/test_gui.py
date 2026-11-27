@@ -350,6 +350,21 @@ def test_start_page_recent_files_and_panels(app, tmp_path):
     assert opened == [p]
 
 
+@pytest.mark.parametrize("typed, shown", [("800", "800%"), ("5000", "800%"), ("10", "10%"), ("1", "10%")])
+def test_zoom_box_limits_match_the_canvas(win, typed, shown):
+    """Issue #26: the canvas stopped at 600% and 15% while the zoom box offered 800% and 10%."""
+    w = win
+    w.zoom_box.setCurrentText(typed); w._zoom_from_box()
+    assert w.lbl_zoom.text() == shown and w.zoom_box.currentText() == shown
+
+
+def test_zooming_in_stops_at_the_zoom_box_maximum(win):
+    w = win
+    for _ in range(40):
+        w.cv.set_zoom(w.cv.zoom * 1.25)
+    assert w.lbl_zoom.text() == "800%"
+
+
 def test_status_bar_zoom_box_layers_and_measurements_panel(win, tmp_path):
     w = win
     app = QtWidgets.QApplication.instance()
