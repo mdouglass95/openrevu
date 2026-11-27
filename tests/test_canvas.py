@@ -8,7 +8,7 @@ import pytest
 pytest.importorskip("PyQt5")
 from PyQt5 import QtCore, QtGui, QtTest, QtWidgets
 
-from openrevu.canvas import Canvas
+from openrevu.canvas import ZOOM_MAX, Canvas
 from openrevu.core import Document
 
 E_SIZE = (2592, 1728)   # a 36 x 24 in sheet, in points
@@ -44,8 +44,8 @@ def pixmap_bytes(cv):
 def test_zooming_to_800_percent_on_a_large_sheet_keeps_pixmaps_small(app, tmp_path, monkeypatch):
     monkeypatch.setattr(Canvas, "devicePixelRatioF", lambda self: 2.0)
     cv = make_canvas(tmp_path)
-    cv.set_zoom(8.0)
-    assert cv.zoom == 8.0
+    cv.set_zoom(ZOOM_MAX)
+    assert cv.zoom == ZOOM_MAX
     assert pixmap_bytes(cv) < 200 * 1024 ** 2
 
 
@@ -167,12 +167,12 @@ def test_an_edit_during_a_wheel_zoom_settles_it_at_once_instead_of_blanking_the_
 
 def test_ctrl_wheel_beyond_the_zoom_limit_does_nothing(app, tmp_path, monkeypatch):
     cv = make_canvas(tmp_path)
-    cv.set_zoom(8.0)
+    cv.set_zoom(ZOOM_MAX)
     layouts, real_relayout = [], Canvas.relayout
     monkeypatch.setattr(Canvas, "relayout", lambda self: layouts.append(1) or real_relayout(self))
     ctrl_wheel(cv, QtCore.QPoint(400, 300))
     QtTest.QTest.qWait(300)
-    assert layouts == [] and cv.zoom == 8.0
+    assert layouts == [] and cv.zoom == ZOOM_MAX
 
 
 def test_scrolling_with_the_wheel_during_a_wheel_zoom_settles_it_first(app, tmp_path):

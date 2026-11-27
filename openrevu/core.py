@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import pymupdf as fitz  # PyMuPDF
 
 from . import _journal, pdfmeasure
-from ._util import mutates as _mutates
+from ._util import mutates as _mutates, replace_file
 from .pages import PageOps
 from .sheets import SheetOps
 
@@ -199,6 +199,19 @@ def _fingerprint(vps) -> str:
 def _xget(doc, xref, key):
     t, v = doc.xref_get_key(xref, key)
     return None if t == "null" else v
+
+
+def _byte_range_intact(byte_range: str, data: bytes) -> bool:
+    """True if a signature's /ByteRange [a b c d] still fits the file: the signed ranges lie inside it, and the gap
+    between them holds exactly the hex string of the signature's /Contents."""
+    try:
+        a, b, c, d = (int(n) for n in byte_range.strip("[] ").split())
+    except ValueError:
+        return False
+    if not (a == 0 and 0 < b < c and d >= 0 and c + d <= len(data)):
+        return False
+    gap = data[b:c]
+    return len(gap) >= 2 and gap[:1] == b"<" and gap[-1:] == b">" and bytes(gap[1:-1]).strip(b"0123456789abcdefABCDEF \r\n") == b""
 
 
 def _refs(doc, kind, value) -> list[int]:
@@ -586,7 +599,8 @@ class Document(SheetOps, PageOps):
     def __init__(self, path: str | None = None, password: str | None = None):
         # Stat before reading: a change between the two then shows as a change at save, never goes unnoticed.
         self._disk = _disk_state(path)
-        self.doc = self._open(path) if path else fitz.open()
+        data = self._read(path) if path else None
+        self.doc = fitz.open("pdf", data) if path else fitz.open()
         encrypted = bool(self.doc.needs_pass)
         p = self.doc.xref_get_key(-1, "Encrypt/P")
         # The file's own permission bits, re-applied on save; None if the file is not encrypted.
@@ -616,17 +630,14 @@ class Document(SheetOps, PageOps):
         self.default_scale, self.page_scales = self._load_scales()
         # A full rewrite (all save() can do) invalidates digital signatures, so callers warn before saving over the
         # file. Set once at open: the signatures in the file on disk are what a save would break.
-        self.signed = self._has_signatures()
+        self.signed = data is not None and self._has_signatures(data)
 
-    def _has_signatures(self) -> bool:
-        # SigFlags bit 2 (AppendOnly) is the signer's "saving other than incrementally breaks this" marker. Bit 1 alone
-        # only says a signature field exists, which may still be blank.
+    def _has_signatures(self, data: bytes) -> bool:
+        """True if a signature field holds a signature whose signed bytes are still those of the file `data`.
+        A rewrite (any save that is not incremental) moves every object, so it leaves the /V values but breaks them."""
+        # Walk the AcroForm field tree by xref, without loading pages: a signature field (/FT inherits down /Kids)
+        # with a value is signed.
         d = self.doc
-        flags = d.get_sigflags()   # -1: no form at all
-        if flags > 0 and flags & 2:
-            return True
-        # Otherwise walk the AcroForm field tree by xref, without loading pages: a signature field (/FT inherits down
-        # /Kids) with a value is signed.
         todo = [(x, None) for x in _refs(d, *d.xref_get_key(d.pdf_catalog(), "AcroForm/Fields"))]
         seen = set()
         while todo:
@@ -635,16 +646,21 @@ class Document(SheetOps, PageOps):
                 continue
             seen.add(xref)
             ft = _xget(d, xref, "FT") or ft
-            if ft == "/Sig" and _xget(d, xref, "V"):
+            if ft == "/Sig" and _xget(d, xref, "V") and _byte_range_intact(d.xref_get_key(xref, "V/ByteRange")[1], data):
                 return True
             todo += [(k, ft) for k in _refs(d, *d.xref_get_key(xref, "Kids"))]
         return False
 
     @staticmethod
-    def _open(path: str) -> fitz.Document:
-        """Open from memory so the file is never locked (Windows refuses to replace/overwrite open files)."""
+    def _read(path: str) -> bytes:
+        """The file's bytes. The document is opened from memory so the file is never locked (Windows refuses to
+        replace or overwrite open files)."""
         with open(path, "rb") as f:
-            return fitz.open("pdf", f.read())
+            return f.read()
+
+    @staticmethod
+    def _open(path: str) -> fitz.Document:
+        return fitz.open("pdf", Document._read(path))
 
     def _page(self, pno: int) -> fitz.Page:
         """Page object kept alive (annotations returned by add_* are only valid while their page is)."""
@@ -1388,20 +1404,23 @@ class Document(SheetOps, PageOps):
                 markup._page.delete_annot(a)
         markup._page.delete_annot(markup.annot)
 
-    def takeoff(self):
-        """{(kind, unit): total} over all measurement markups."""
+    def measured(self):
+        """[(markup, measurement or None)] for every markup. measurement() can be costly (a Revu markup is parsed
+        from its /Measure dictionary each time), so callers that need both lists and totals compute it once here."""
+        return [(m, m.measurement()) for m in self.markups()]
+
+    def takeoff(self, measured=None):
+        """{(kind, unit): total} over all measurement markups. `measured`: a result of measured(), to reuse."""
         totals: dict = {}
-        for m in self.markups():
-            r = m.measurement()
+        for m, r in self.measured() if measured is None else measured:
             if r:
                 totals[(r[0], r[2])] = totals.get((r[0], r[2]), 0.0) + r[1]
         return totals
 
-    def takeoff_by_subject(self):
-        """{(subject, kind, unit): (count_of_items, total)} — a measurement summary."""
+    def takeoff_by_subject(self, measured=None):
+        """{(subject, kind, unit): (count_of_items, total)} — a measurement summary. `measured`: as in takeoff()."""
         out: dict = {}
-        for m in self.markups():
-            r = m.measurement()
+        for m, r in self.measured() if measured is None else measured:
             if r:
                 n, t = out.get((m.subject, r[0], r[2]), (0, 0.0))
                 out[(m.subject, r[0], r[2])] = (n + 1, t + r[1])
@@ -1447,19 +1466,8 @@ class Document(SheetOps, PageOps):
         if "encryption" not in kw:
             kw.update(self._encryption_kwargs())
         if in_place:
-            tmp = path + ".tmp"
             # self.doc is memory-backed (see _open), so `path` can be replaced while it stays open.
-            try:
-                self.doc.save(tmp, **kw)
-                try:
-                    os.replace(tmp, path)
-                except OSError as e:
-                    raise OSError(e.errno, f"Could not replace the file; is it open in another program? ({e.strerror})",
-                                  path) from e
-            except Exception:
-                with contextlib.suppress(OSError):
-                    os.remove(tmp)
-                raise
+            replace_file(path, lambda tmp: self.doc.save(tmp, **kw))
         else:
             self.doc.save(path, **kw)
             self.path = path

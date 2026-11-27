@@ -11,7 +11,7 @@ import pymupdf as fitz  # PyMuPDF
 from PyQt5 import QtCore, QtGui, QtWidgets as W
 
 from . import __version__
-from .canvas import Canvas
+from .canvas import PX_PER_PT, ZOOM_MAX_PCT, ZOOM_MIN_PCT, Canvas
 from .core import STATUSES, Document, FileChangedError
 from .gui_ops import ERRORS, DocumentOps, parse_pages  # noqa: F401  (parse_pages re-exported)
 from .icons import tool_icon
@@ -843,7 +843,7 @@ class Main(DocumentOps, W.QMainWindow):
             pct = float(self.zoom_box.currentText().strip().rstrip("%"))
         except ValueError:
             return self._update_status_widgets()
-        self.cv.set_zoom(max(10.0, min(800.0, pct)) / 100.0 * 96 / 72)
+        self.cv.set_zoom(max(ZOOM_MIN_PCT, min(ZOOM_MAX_PCT, pct)) / 100 * PX_PER_PT)
 
     # ---------- status bar ----------
     def _build_statusbar(self):
@@ -871,7 +871,7 @@ class Main(DocumentOps, W.QMainWindow):
         sc = d.scale_for(p)
         self.lbl_scale.setText(f"Scale: 1 in = {sc.unit_per_pt * 72:.4g} {sc.unit}" + (" (viewports on page)" if any(v[0] == p for v in d.viewports) else ""))
         self.lbl_page.setText(f"Page {p + 1} of {d.page_count}")
-        pct = round(cv.zoom * 72 / 96 * 100)
+        pct = round(cv.zoom / PX_PER_PT * 100)
         self.lbl_zoom.setText(f"{pct}%")
         self.zoom_box.blockSignals(True)
         self.zoom_box.setCurrentText(f"{pct}%")
@@ -1002,6 +1002,28 @@ class Main(DocumentOps, W.QMainWindow):
         box.exec_()
         return {overwrite: "overwrite", save_as: "save_as"}.get(box.clickedButton(), "cancel")
 
+    def _overwrites_signed_original(self, d: Document, path: str) -> bool:
+        """True if writing `path` would rewrite `d`'s digitally signed file, whose signatures are still intact."""
+        if not (d.signed and d.path and path) or d.recovery_id in self._rewritten:
+            return False
+        try:
+            return os.path.samefile(path, d.path)
+        except OSError:   # one of them does not exist
+            return os.path.normcase(os.path.abspath(path)) == os.path.normcase(os.path.abspath(d.path))
+
+    def _ask_pdf_path(self, title: str, start: str = "", d: Document | None = None) -> str:
+        """Ask where to write a PDF made from `d` (default: the current document). If the user picks its signed original,
+        warn first (see _ask_save_signed); "Save As…" asks for another file. Returns "" if cancelled."""
+        while True:
+            p, _ = W.QFileDialog.getSaveFileName(self, title, start, "PDF (*.pdf)")
+            if not self._overwrites_signed_original(d or self.doc, p):
+                return p
+            choice = self._ask_save_signed()
+            if choice == "anyway":
+                return p
+            if choice == "cancel":
+                return ""
+
     def _save(self, d: Document) -> bool:
         in_place = bool(d.path) and not d.save_as_required
         if in_place and d.signed and d.recovery_id not in self._rewritten:
@@ -1025,7 +1047,7 @@ class Main(DocumentOps, W.QMainWindow):
                 title = "Save a copy (this PDF restricts editing)" if d.restricted else "Save"
                 # a signed document's suggested path is its signed original: overwriting it is what the warning is about
                 start = "" if d.signed else getattr(d, "suggested_path", None) or ""
-                p, _ = W.QFileDialog.getSaveFileName(self, title, start, "PDF (*.pdf)")
+                p = self._ask_pdf_path(title, start, d)
                 if not p:
                     return False
                 d.save(p, force=True)   # the file dialog already asked whether to replace an existing file
@@ -1053,7 +1075,7 @@ class Main(DocumentOps, W.QMainWindow):
 
     def save_as(self):
         if self._need_doc():
-            p, _ = W.QFileDialog.getSaveFileName(self, "Save As", "", "PDF (*.pdf)")
+            p = self._ask_pdf_path("Save As")
             if p:
                 self.cv.select(None)
                 # force: the file dialog already asked whether to replace an existing file, even this document's own
@@ -1067,13 +1089,13 @@ class Main(DocumentOps, W.QMainWindow):
             return
         pw, ok = W.QInputDialog.getText(self, "Encrypt", "Password to open the copy:", W.QLineEdit.Password)
         if ok and pw:
-            p, _ = W.QFileDialog.getSaveFileName(self, "Save encrypted copy", "", "PDF (*.pdf)")
+            p = self._ask_pdf_path("Save encrypted copy")
             if p:
                 self._run(self.doc.save_encrypted, p, pw, msg="Encrypted copy saved")
 
     def optimize(self):
         if self._need_doc():
-            p, _ = W.QFileDialog.getSaveFileName(self, "Optimized copy", "", "PDF (*.pdf)")
+            p = self._ask_pdf_path("Optimized copy")
             if p:
                 r = self._run(self.doc.optimize, p)
                 if r:
@@ -1095,10 +1117,15 @@ class Main(DocumentOps, W.QMainWindow):
         if not self._need_doc():
             return
         from PyQt5 import QtPrintSupport as P
-        from .printing import print_document
+        from .printing import chosen_pages, print_document
         pr = P.QPrinter(P.QPrinter.HighResolution)
-        if P.QPrintDialog(pr, self).exec_() != W.QDialog.Accepted:
+        pd = P.QPrintDialog(pr, self)
+        pd.setOption(P.QPrintDialog.PrintPageRange)
+        pd.setOption(P.QPrintDialog.PrintCurrentPage)
+        pd.setMinMax(1, self.doc.page_count)
+        if pd.exec_() != W.QDialog.Accepted:
             return
+        pages = chosen_pages(pr, self.doc.page_count, self.cv.current_page())
         dlg = W.QProgressDialog("Printing…", "Cancel", 0, 0, self)
         dlg.setWindowTitle("Print")
         dlg.setWindowModality(QtCore.Qt.WindowModal)   # setValue() then keeps the window and Cancel responsive
@@ -1109,11 +1136,11 @@ class Main(DocumentOps, W.QMainWindow):
             dlg.setValue(done)
             return not dlg.wasCanceled()
         try:
-            ok = print_document(pr, self.doc, progress)
+            ok = print_document(pr, self.doc, progress, pages)
         finally:
             dlg.close()
             dlg.deleteLater()
-        self.statusBar().showMessage(f"Printed {self.doc.page_count} page(s)." if ok else "Printing cancelled.")
+        self.statusBar().showMessage(f"Printed {len(pages)} page(s)." if ok else "Printing cancelled.")
 
     # ---------- tools & the Properties toolbar ----------
     def set_tool(self, name, announce=True):
@@ -1233,11 +1260,11 @@ class Main(DocumentOps, W.QMainWindow):
         t.setHorizontalHeaderLabels(["Page", "Subject", "Type", "Author", "Status", "Comment", "Value"] + [c["name"] for c in cols])
         if d:
             q, st = self.mk_filter.text().lower(), self.mk_status.currentIndex()
-            for m in d.markups():
+            measured = d.measured()
+            for m, r in measured:
                 status = m.status
                 if st and STATUSES[st - 1] != status:
                     continue
-                r = m.measurement()
                 val = d.fmt(*r) if r else ""
                 cv = m.custom()
                 row = [str(m.page_no + 1), m.subject, m.kind, m.author, status, m.comment, val] \
@@ -1254,7 +1281,7 @@ class Main(DocumentOps, W.QMainWindow):
                         it.setData(QtCore.Qt.DisplayRole, int(txt))
                     t.setItem(i, c, it)
                 self._rows.append(m)
-            for k, ((subj, kind, unit), (n, tot)) in enumerate(sorted(d.takeoff_by_subject().items())):
+            for k, ((subj, kind, unit), (n, tot)) in enumerate(sorted(d.takeoff_by_subject(measured).items())):
                 self.meas_table.insertRow(k)
                 for c, v in enumerate((subj, str(n), d.fmt(kind, tot, unit).split(" ")[0], {"area": f"{unit}²", "volume": f"{unit}³"}.get(kind, unit))):
                     self.meas_table.setItem(k, c, W.QTableWidgetItem(v))
@@ -1265,7 +1292,7 @@ class Main(DocumentOps, W.QMainWindow):
             self._mk_widths_set = True
         self._rebuild_custom_fields()
         if d:
-            lines = [f"{k.title()}: {d.fmt(k, v, u)}" for (k, u), v in sorted(d.takeoff().items())]
+            lines = [f"{k.title()}: {d.fmt(k, v, u)}" for (k, u), v in sorted(d.takeoff(measured).items())]
             self.totals.setText("Totals — " + ("; ".join(lines) if lines else "no measurements yet"))
         else:
             self.totals.setText("")
@@ -1436,7 +1463,8 @@ class Main(DocumentOps, W.QMainWindow):
         self.p_replies.clear()
         if m is not None:
             try:
-                self.p_info.setText(f"{m.kind} on page {m.page_no + 1}" + (f"\n{self.doc.fmt(*m.measurement())}" if m.measurement() else ""))
+                r = m.measurement()
+                self.p_info.setText(f"{m.kind} on page {m.page_no + 1}" + (f"\n{self.doc.fmt(*r)}" if r else ""))
                 self.p_subject.setText(m.subject)
                 self.p_comment.setPlainText(m.comment)
                 self.p_status.setCurrentIndex(STATUSES.index(m.status) if m.status in STATUSES else 0)
@@ -1543,7 +1571,7 @@ class Main(DocumentOps, W.QMainWindow):
         mode, ok = W.QInputDialog.getItem(self, "Markup Summary", "Include a picture of each markup?", ["Yes", "No"], 0, False)
         if not ok:
             return
-        p, _ = W.QFileDialog.getSaveFileName(self, "Save the Markup Summary", "markup-summary.pdf", "PDF (*.pdf)")
+        p = self._ask_pdf_path("Save the Markup Summary", "markup-summary.pdf")
         if p:
             n = self._run(self.doc.export_markup_summary, p, mode == "Yes")
             if n is not None:

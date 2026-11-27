@@ -350,6 +350,21 @@ def test_start_page_recent_files_and_panels(app, tmp_path):
     assert opened == [p]
 
 
+@pytest.mark.parametrize("typed, shown", [("800", "800%"), ("5000", "800%"), ("10", "10%"), ("1", "10%")])
+def test_zoom_box_limits_match_the_canvas(win, typed, shown):
+    """Issue #26: the canvas stopped at 600% and 15% while the zoom box offered 800% and 10%."""
+    w = win
+    w.zoom_box.setCurrentText(typed); w._zoom_from_box()
+    assert w.lbl_zoom.text() == shown and w.zoom_box.currentText() == shown
+
+
+def test_zooming_in_stops_at_the_zoom_box_maximum(win):
+    w = win
+    for _ in range(40):
+        w.cv.set_zoom(w.cv.zoom * 1.25)
+    assert w.lbl_zoom.text() == "800%"
+
+
 def test_status_bar_zoom_box_layers_and_measurements_panel(win, tmp_path):
     w = win
     app = QtWidgets.QApplication.instance()
@@ -398,6 +413,28 @@ def test_pan_tool_drags_the_view(win):
     assert w.cv.verticalScrollBar().value() == 100
     assert w.doc.markups() == []
     assert w.cv.viewport().cursor().shape() == QtCore.Qt.OpenHandCursor
+
+
+def test_markups_refresh_and_selection_measure_each_markup_once(win, monkeypatch):
+    """Issue #40: the list, the per-subject table and the totals each called measurement() on every markup."""
+    from openrevu.core import Markup
+    w = win
+    for y in (100, 150, 200):
+        w.doc.add_length(0, [(10, y), (160, y)])
+    w.doc.add_area(0, [(10, 300), (100, 300), (100, 400)])
+    w.doc.add_rect(0, fitz.Rect(300, 300, 350, 350))
+    calls = []
+    real = Markup.measurement
+    monkeypatch.setattr(Markup, "measurement", lambda self: calls.append(self.xref) or real(self))
+    w.mk_status.setCurrentIndex(w.mk_status.count() - 1)   # a status filter hides every row, but not the totals
+    calls.clear()
+    w.refresh_markups()
+    assert len(calls) == len(w.doc.markups()) == 5 and len(set(calls)) == 5
+    assert w.mk_table.rowCount() == 0
+    assert w.meas_table.rowCount() == 2 and "Length" in w.totals.text() and "Area" in w.totals.text()
+    calls.clear()
+    w.cv.selected = w.doc.markups()[0]; w._load_props()
+    assert len(calls) == 1
 
 
 def test_feet_inches_menu_toggle_redraws_labels_and_shows_in_the_list(win):
@@ -781,6 +818,68 @@ def test_a_recovered_signed_pdf_does_not_offer_its_signed_original_as_the_file_n
                         staticmethod(lambda parent, title, start, *a: asked.update(start=start) or ("", "")))
     w.save()
     assert asked["start"] != signed_pdf
+
+
+def _copy_commands(w, monkeypatch):
+    """The commands that write a PDF to a path the user picks, with their other questions answered."""
+    monkeypatch.setattr(QtWidgets.QInputDialog, "getText", staticmethod(lambda *a, **k: ("secret", True)))
+    monkeypatch.setattr(QtWidgets.QInputDialog, "getItem", staticmethod(lambda parent, title, label, items, *a, **k: (items[0], True)))
+    monkeypatch.setattr(type(w), "_ask_pages", lambda self, *a, **k: [0])
+    return {"save_as": w.save_as, "save_encrypted": w.save_encrypted, "optimize": w.optimize,
+            "extract_pages": w.extract_pages, "export_summary_pdf": w.export_summary_pdf}
+
+
+@pytest.mark.parametrize("command", ["save_as", "save_encrypted", "optimize", "extract_pages", "export_summary_pdf"])
+def test_a_copy_command_asks_before_it_overwrites_the_signed_original(signed_win, signed_pdf, monkeypatch, tmp_path, command):
+    """Issue #35: only Save asked; the other commands rewrote a signed original that the user picked as the destination."""
+    w = signed_win
+    run = _copy_commands(w, monkeypatch)[command]
+    original = Path(signed_pdf).read_bytes()
+    picks = [signed_pdf]
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (picks.pop(0), "")))
+
+    seen = answer_with(monkeypatch, "Cancel")
+    run()
+    assert seen["asked"] == 1 and "signatures" in seen["text"]
+    assert Path(signed_pdf).read_bytes() == original
+
+    copy = str(tmp_path / "copy.pdf")
+    picks[:] = [signed_pdf, copy]                        # "Save As…" asks for another file
+    seen = answer_with(monkeypatch, "Save As…")
+    run()
+    assert seen["asked"] == 1 and picks == [] and os.path.exists(copy)
+    assert Path(signed_pdf).read_bytes() == original
+
+
+def test_save_as_from_the_signed_question_asks_again_if_the_original_is_picked(signed_win, signed_pdf, monkeypatch, tmp_path):
+    w = signed_win
+    original = Path(signed_pdf).read_bytes()
+    w.doc.add_rect(0, fitz.Rect(100, 100, 200, 200))
+    copy = str(tmp_path / "copy.pdf")
+    picks = [signed_pdf, copy]
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (picks.pop(0), "")))
+    seen = answer_with(monkeypatch, "Save As…")
+    w.save()
+    assert seen["asked"] == 2 and picks == [] and w.doc.path == copy
+    assert Path(signed_pdf).read_bytes() == original
+
+
+def test_a_copy_command_saves_over_the_signed_original_when_told_to(signed_win, signed_pdf, monkeypatch):
+    w = signed_win
+    original = Path(signed_pdf).read_bytes()
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (signed_pdf, "")))
+    seen = answer_with(monkeypatch, "Save anyway")
+    _copy_commands(w, monkeypatch)["optimize"]()
+    assert seen["asked"] == 1 and Path(signed_pdf).read_bytes() != original
+
+
+def test_a_copy_command_to_another_file_does_not_ask(signed_win, monkeypatch, tmp_path):
+    w = signed_win
+    copy = str(tmp_path / "copy.pdf")
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (copy, "")))
+    seen = answer_with(monkeypatch, "Cancel")
+    _copy_commands(w, monkeypatch)["optimize"]()
+    assert seen["asked"] == 0 and os.path.exists(copy)
 
 
 def test_a_signed_pdf_that_must_be_saved_as_a_copy_skips_the_signed_question(signed_win, signed_pdf, monkeypatch, tmp_path):

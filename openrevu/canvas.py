@@ -24,7 +24,10 @@ HANDLE = 8
 FULL_PAGE_PX = 8_000_000
 BACKDROP_PX = 2_000_000
 DETAIL_MARGIN = 0.25
-ZOOM_MIN, ZOOM_MAX = 0.2, 8.0
+# Zoom is in screen pixels per PDF point; the user sees it as a percentage, where 100% is 96 dpi.
+PX_PER_PT = 96 / 72
+ZOOM_MIN_PCT, ZOOM_MAX_PCT = 10, 800
+ZOOM_MIN, ZOOM_MAX = ZOOM_MIN_PCT / 100 * PX_PER_PT, ZOOM_MAX_PCT / 100 * PX_PER_PT
 ZOOM_SETTLE_MS = 150   # wheel zoom scales the current picture at once and re-renders after this pause
 # tools that need a region with both a width and a height (a straight horizontal or vertical drag has no area)
 AREA_TOOLS = {"Rectangle", "Ellipse", "Cloud", "Highlight", "Underline", "Strikeout", "Squiggly", "Text", "Callout",

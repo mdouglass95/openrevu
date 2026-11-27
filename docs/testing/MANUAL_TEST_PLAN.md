@@ -117,6 +117,7 @@ clearly. Type `test123`. Expect it to open.
 **T06 Zoom.** Use the zoom box (type `150`, press Enter), the **+** and **−** buttons, Ctrl+mouse wheel, **Fit width**, and
 **Fit page**. Expect the zoom box and the status bar to agree. The page must stay sharp, not blurry.
 Type nonsense in the zoom box: expect the old value to come back.
+Type `800`: expect `800%`; the **+** button and Ctrl+wheel also stop at 800%. Type `5`: expect `10%`, the minimum.
 Ctrl+mouse wheel zooms around the mouse pointer: the word or line under the pointer stays under it. While you turn the wheel
 the picture may look soft; it must turn sharp a moment after you stop. The **+** and **−** buttons and the zoom box keep
 whatever is in the middle of the view in the middle.
@@ -297,6 +298,8 @@ arrives. **Copy text**: drag over text, paste in a text editor: the text arrives
 
 **T46b Print.** Open `plan_v1.pdf` and add a markup. Press Ctrl+P and print to a PDF file (**Print to File (PDF)** on Linux,
 **Microsoft Print to PDF** on Windows, **PDF > Save as PDF** on macOS). Open the result. Expect 3 pages, each sheet filling the paper and sharp, with the markup in place.
+Print again with **Pages from 2 to 3**: expect 2 pages, the status bar says "Printed 2 page(s).". Go to page 3 and print with
+**Current page**: expect 1 page, page 3.
 Print `many_pages.pdf` the same way. Expect a **Print** window with a progress bar and **Cancel** after half a second.
 Press Cancel: printing stops within a second, and the status bar says "Printing cancelled.".
 If a large-format printer or a plotter driver is installed, print a sheet on ARCH E (36 x 48 in) paper at its highest
@@ -316,6 +319,9 @@ Add a markup and press Ctrl+S. Expect a warning with **Save As…** (the default
 **Sign > Verify signatures…** (Cancel the certificate question): it must say `intact` and `unchanged since signing`.
 In that tab add a markup, press Ctrl+S, choose **Save anyway**: the file is overwritten, and Verify now says `MODIFIED` or
 `EDITED AFTER SIGNING`. Add another markup and press Ctrl+S: no second warning.
+Open a fresh copy of `signed.pdf`. Choose **File > Optimize / compress copy…** and pick `signed.pdf` itself: expect the same
+warning. **Save As…** opens the file dialog again; **Cancel** writes nothing. Save encrypted copy, Save As, Extract pages,
+PDF/A, Compare overlay and Markup Summary ask the same way.
 
 **T48 Autosave and recovery.** Start the program with `OPENREVU_AUTOSAVE_SECONDS=5 openrevu`. Open a file, add two markups, wait 10 seconds.
 Kill the program hard (`kill -9 <pid>`, or end the task). Start it again. Expect a question: "OpenRevu closed unexpectedly last time…".
