@@ -11,7 +11,7 @@ import pymupdf as fitz  # PyMuPDF
 from PyQt5 import QtCore, QtGui, QtWidgets as W
 
 from . import __version__
-from .canvas import Canvas
+from .canvas import PX_PER_PT, ZOOM_MAX_PCT, ZOOM_MIN_PCT, Canvas
 from .core import STATUSES, Document
 from .gui_ops import ERRORS, DocumentOps, parse_pages  # noqa: F401  (parse_pages re-exported)
 from .icons import tool_icon
@@ -843,7 +843,7 @@ class Main(DocumentOps, W.QMainWindow):
             pct = float(self.zoom_box.currentText().strip().rstrip("%"))
         except ValueError:
             return self._update_status_widgets()
-        self.cv.set_zoom(max(10.0, min(800.0, pct)) / 100.0 * 96 / 72)
+        self.cv.set_zoom(max(ZOOM_MIN_PCT, min(ZOOM_MAX_PCT, pct)) / 100 * PX_PER_PT)
 
     # ---------- status bar ----------
     def _build_statusbar(self):
@@ -871,7 +871,7 @@ class Main(DocumentOps, W.QMainWindow):
         sc = d.scale_for(p)
         self.lbl_scale.setText(f"Scale: 1 in = {sc.unit_per_pt * 72:.4g} {sc.unit}" + (" (viewports on page)" if any(v[0] == p for v in d.viewports) else ""))
         self.lbl_page.setText(f"Page {p + 1} of {d.page_count}")
-        pct = round(cv.zoom * 72 / 96 * 100)
+        pct = round(cv.zoom / PX_PER_PT * 100)
         self.lbl_zoom.setText(f"{pct}%")
         self.zoom_box.blockSignals(True)
         self.zoom_box.setCurrentText(f"{pct}%")
