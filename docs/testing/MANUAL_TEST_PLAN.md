@@ -179,8 +179,11 @@ Try **Set status** > Accepted. Try **Reply…**.
 
 **T20 Review.** Select a markup. In the **Properties** tab set Subject, Comment, Status, and press Enter in the reply box.
 Expect the **Markups List** (bottom) to show them. Click a row: the markup is selected and the view moves to it.
-Use the filter box and the status filter. Click column headers to sort. Drag a column border to widen it.
+Use the filter box and the status filter. The list follows the filter box once you stop typing for a moment,
+or at once when you press Enter. Click column headers to sort. Drag a column border to widen it.
 Point at a long comment: expect a tooltip with the whole text.
+Close the Markups List (View > Markups List), add a markup, then open the list again with Alt+9: the new markup is listed
+and the totals line includes it.
 
 **T21 Keep tool.** Click the pin in the Properties toolbar. Choose Rectangle and place three rectangles in a row.
 Expect the tool to stay on. Click the pin again: it goes back to single use.

@@ -541,10 +541,17 @@ class Main(DocumentOps, W.QMainWindow):
         hh.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         hh.customContextMenuRequested.connect(self._header_menu)
         hh.setToolTip("Right-click to add or remove a column")
-        self.mk_filter.textChanged.connect(self.refresh_markups)
+        # rebuild once typing pauses, not on every keystroke; Enter applies the filter at once
+        self.mk_filter_timer = QtCore.QTimer(self, singleShot=True, interval=200)
+        self.mk_filter_timer.timeout.connect(self.refresh_markups)
+        self.mk_filter.textChanged.connect(lambda _t: self.mk_filter_timer.start())
+        self.mk_filter.returnPressed.connect(self.refresh_markups)
         self.mk_status.currentIndexChanged.connect(self.refresh_markups)
         mkl.addWidget(self.mk_table)
         self.d_markups = self._dock("Markups List", mkw, QtCore.Qt.BottomDockWidgetArea)
+        self._markups_stale = False    # refresh_markups skipped a hidden dock: fill it when it is shown
+        for dock in (self.d_markups, self.right_dock):
+            dock.visibilityChanged.connect(self._dock_visibility_changed)
         self.resizeDocks([self.left_dock, self.right_dock], [230, 290], QtCore.Qt.Horizontal)
         self.resizeDocks([self.d_markups], [190], QtCore.Qt.Vertical)
 
@@ -1199,6 +1206,11 @@ class Main(DocumentOps, W.QMainWindow):
         self.setWindowTitle(f"OpenRevu — {d.path}" if d and d.path else "OpenRevu")
 
     def refresh_markups(self):
+        """Fill the Markups List with its totals line, and the Measurements table. Each part is skipped while its
+        dock is hidden (hidden by the user, not merely off screen) and is filled when the dock is shown."""
+        self.mk_filter_timer.stop()
+        list_on, meas_on = not self.d_markups.isHidden(), not self.right_dock.isHidden()
+        self._markups_stale = not (list_on and meas_on)
         self._rows = []
         t = self.mk_table
         t.setSortingEnabled(False)
@@ -1210,8 +1222,8 @@ class Main(DocumentOps, W.QMainWindow):
         t.setHorizontalHeaderLabels(["Page", "Subject", "Type", "Author", "Status", "Comment", "Value"] + [c["name"] for c in cols])
         if d:
             q, st = self.mk_filter.text().lower(), self.mk_status.currentIndex()
-            measured = d.measured()
-            for m, r in measured:
+            measured = d.measured() if list_on or meas_on else []
+            for m, r in measured if list_on else ():
                 status = m.status
                 if st and STATUSES[st - 1] != status:
                     continue
@@ -1231,7 +1243,7 @@ class Main(DocumentOps, W.QMainWindow):
                         it.setData(QtCore.Qt.DisplayRole, int(txt))
                     t.setItem(i, c, it)
                 self._rows.append(m)
-            for k, ((subj, kind, unit), (n, tot)) in enumerate(sorted(d.takeoff_by_subject(measured).items())):
+            for k, ((subj, kind, unit), (n, tot)) in enumerate(sorted(d.takeoff_by_subject(measured).items()) if meas_on else ()):
                 self.meas_table.insertRow(k)
                 for c, v in enumerate((subj, str(n), d.fmt(kind, tot, unit).split(" ")[0], {"area": f"{unit}²", "volume": f"{unit}³"}.get(kind, unit))):
                     self.meas_table.setItem(k, c, W.QTableWidgetItem(v))
@@ -1241,11 +1253,15 @@ class Main(DocumentOps, W.QMainWindow):
                 t.setColumnWidth(col, width)
             self._mk_widths_set = True
         self._rebuild_custom_fields()
-        if d:
+        if d and list_on:
             lines = [f"{k.title()}: {d.fmt(k, v, u)}" for (k, u), v in sorted(d.takeoff(measured).items())]
             self.totals.setText("Totals — " + ("; ".join(lines) if lines else "no measurements yet"))
         else:
             self.totals.setText("")
+
+    def _dock_visibility_changed(self, visible):
+        if visible and self._markups_stale:
+            self.refresh_markups()
 
     def _table_select(self):
         rows = self.mk_table.selectionModel().selectedRows()
