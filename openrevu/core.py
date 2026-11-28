@@ -147,17 +147,23 @@ def feet_inches(inches: float, denominator: int = 16) -> str:
     return f"{sign}{feet}' {inch_text}\"" if feet else f"{sign}{inch_text}\""
 
 
+def unit_label(kind: str, unit: str) -> str:
+    """The unit a measurement is shown in, e.g. 'area' 'ft' -> 'ft²', 'angle' 'deg' -> '°'."""
+    if kind == "angle":
+        return "°"
+    return unit + {"area": "²", "volume": "³"}.get(kind, "")
+
+
 def format_value(kind: str, val: float, unit: str, style: str = "decimal", denominator: int = 16) -> str:
     """Human-readable measurement, e.g. 'area' 12.5 'ft' -> '12.50 ft²'.
     With style='feet-inches', lengths in feet or inches read like 12' 6 1/2\"."""
-    suffix = {"area": "²", "volume": "³"}.get(kind, "")
     if kind == "angle":
-        return f"{val:.1f}°"
+        return f"{val:.1f}{unit_label(kind, unit)}"
     if kind == "count":
-        return f"{val:g} ea"
+        return f"{val:g} {unit_label(kind, unit)}"
     if style == "feet-inches" and kind in ("length", "perimeter", "diameter") and unit in ("ft", "in"):
         return feet_inches(val * (12 if unit == "ft" else 1), denominator)
-    return f"{val:.2f} {unit}{suffix}"
+    return f"{val:.2f} {unit_label(kind, unit)}"
 
 
 def _same_rect(a, b, tol=0.5) -> bool:
@@ -1445,11 +1451,11 @@ class Document(SheetOps, PageOps):
                            + [cv.get(c["name"], "") for c in self.columns])
 
     def export_summary_csv(self, path):
-        with open(path, "w", newline="") as f:
+        with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             w.writerow(["subject", "measure", "items", "total", "unit"])
             for (s, k, u), (n, t) in sorted(self.takeoff_by_subject().items()):
-                w.writerow([s, k, n, f"{t:.4f}", u])
+                w.writerow([s, k, n, f"{t:.4f}", unit_label(k, u)])
 
     def render(self, pno, zoom=1.0, clip=None) -> fitz.Pixmap:
         return self._page(pno).get_pixmap(matrix=fitz.Matrix(zoom, zoom), annots=True, clip=clip)

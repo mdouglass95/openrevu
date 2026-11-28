@@ -29,8 +29,8 @@ Preconditions:
 - **Length.** `s.tool("Length")`, then `s.click(0, 100, 180)`, `s.click(0, 460, 180)`, `s.click(0, 460, 180, double=True)`. The Markups List Value column reads `20.00 ft`.
 - **Fill a room.** `s.tool("Fill")`, then `s.click(0, 150, 420)`. A `Fill Area` row reads 282 to 300 `ft²` (290-ish: room 1 minus its 2 ft column).
 - **Panel totals.** `s.menu("View > Measurements panel")`. `s.table(s.w.meas_table)` lists `Fill Area` and `Length` with their totals. The Markups List header reads `Totals — Area: … ft²; Length: 20.00 ft`.
-- **Summary dialog.** `s.modal(lambda: s.menu("Measure > Measurement summary…"), lambda dlg: s.shot("summary-dialog", dlg))`. The dialog titled `Measurement summary` has columns Subject, Measure, Items, Total, Unit.
-- **Summary CSV.** `s.answer(("getSaveFileName", out))`, then `s.menu("File > Export measurement summary (CSV)…")`. The file has a `subject,measure,items,total,unit` header and one row per subject. `s.keep(out)`.
+- **Summary dialog.** `s.modal(lambda: s.menu("Measure > Measurement summary…"), lambda dlg: s.shot("summary-dialog", dlg))`. The dialog titled `Measurement summary` has columns Subject, Measure, Items, Total, Unit. Its Unit column names each unit as the Markups List does: `ft²` for the Fill Area row, `ft` for Length.
+- **Summary CSV.** `s.answer(("getSaveFileName", out))`, then `s.menu("File > Export measurement summary (CSV)…")`. The file has a `subject,measure,items,total,unit` header and one row per subject, with the same units as the dialog. `s.keep(out)`.
 - **Proof.** `s.shot("measured")` with the panel open, the summary-dialog shot, and the kept CSV.
 
 ## Gotchas
@@ -38,5 +38,4 @@ Preconditions:
 - Calibration asks three questions in a fixed order: length (`getDouble`), unit (`getItem` from mm, cm, m, in, ft, yd), and scope (`getItem` "This page" / "All pages"). Queue all three before the drag.
 - The Length tool needs a double-click on the last point to finish. Two single clicks leave the line open.
 - A drag lands within about half a point of its target after screen rounding (the calibration reads `360.4 pt`). Assert measured values with a tolerance.
-- The Markups List shows areas in `ft²`. The summary dialog and the summary CSV show the same area with unit `ft` (issue #66). Assert what each view shows, and expect the summary views to change when #66 is fixed.
 - Expected numbers for the sample sheets are in `s.expected["room_area_sq_ft"]` and `s.expected["drawing_scale"]`.

@@ -497,6 +497,22 @@ def test_header_menu_lists_add_and_remove(win):
     assert called["actions"] == ["Add column…", "Remove column"]
 
 
+def test_measurement_summary_names_area_and_volume_units(win, monkeypatch):
+    d = win.doc
+    d.add_area(0, [(10, 10), (110, 10), (110, 110), (10, 110)])
+    d.add_area(0, [(10, 10), (110, 10), (110, 110), (10, 110)], subject="Volume", depth=2)
+    d.add_length(0, [(10, 10), (110, 10)]); win._after_change()
+    seen = {}
+
+    def grab(dlg):
+        t = dlg.findChild(QtWidgets.QTableWidget)
+        seen.update(rows={t.item(r, 0).text(): t.item(r, 4).text() for r in range(t.rowCount())})
+        return 0
+    monkeypatch.setattr(QtWidgets.QDialog, "exec_", grab)
+    win.show_summary()
+    assert seen["rows"] == {"Area": "ft²", "Volume": "ft³", "Length": "ft"}
+
+
 def test_export_markup_summary_from_the_menu(win, tmp_path, monkeypatch):
     w = win
     w.doc.add_rect(0, fitz.Rect(100, 200, 200, 260)); w.doc.markups()[0].set_comment("see this"); w._after_change()

@@ -12,7 +12,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets as W
 
 from . import __version__
 from .canvas import PX_PER_PT, ZOOM_MAX_PCT, ZOOM_MIN_PCT, Canvas
-from .core import STATUSES, Document, FileChangedError, same_file
+from .core import STATUSES, Document, FileChangedError, same_file, unit_label
 from .gui_ops import ERRORS, DocumentOps, parse_pages  # noqa: F401  (parse_pages re-exported)
 from .icons import tool_icon
 from . import recovery
@@ -1329,7 +1329,7 @@ class Main(DocumentOps, W.QMainWindow):
                 measured = measured if measured is not None else d.measured()
                 for k, ((subj, kind, unit), (n, tot)) in enumerate(sorted(d.takeoff_by_subject(measured).items())):
                     self.meas_table.insertRow(k)
-                    for c, v in enumerate((subj, str(n), d.fmt(kind, tot, unit).split(" ")[0], {"area": f"{unit}²", "volume": f"{unit}³"}.get(kind, unit))):
+                    for c, v in enumerate((subj, str(n), d.fmt(kind, tot, unit).split(" ")[0], unit_label(kind, unit))):
                         self.meas_table.setItem(k, c, W.QTableWidgetItem(v))
         self._rebuild_custom_fields()
 

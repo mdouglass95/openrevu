@@ -1,3 +1,4 @@
+import csv
 import math
 import os
 
@@ -602,6 +603,26 @@ def test_summary_csv(pdf, tmp_path):
     d.add_count(0, (5, 5), group="Door"); d.add_count(0, (9, 9), group="Door")
     p = tmp_path / "s.csv"; d.export_summary_csv(str(p))
     assert "Door,count,2,2.0000,ea" in p.read_text()
+
+
+def test_summary_csv_names_each_unit_as_the_markups_list_does(pdf, tmp_path):
+    d = Document(pdf)
+    d.set_scale(Scale("ft", 0.1))
+    d.add_length(0, [(10, 10), (110, 10)])
+    d.add_perimeter(0, [(10, 10), (110, 10), (110, 110)])
+    d.add_diameter(0, (10, 10), (110, 10))
+    d.add_area(0, [(10, 10), (110, 10), (110, 110), (10, 110)])
+    d.add_area(0, [(10, 10), (110, 10), (110, 110), (10, 110)], subject="Cut Area",
+               cutouts=[[(20, 20), (40, 20), (40, 40), (20, 40)]])
+    d.add_area(0, [(10, 10), (110, 10), (110, 110), (10, 110)], subject="Volume", depth=2)
+    d.add_angle(0, (110, 10), (10, 10), (10, 110))
+    d.add_count(0, (5, 5), group="Door")
+    p = tmp_path / "s.csv"; d.export_summary_csv(str(p))
+    units = {row["subject"]: row["unit"] for row in csv.DictReader(p.open(encoding="utf-8"))}
+    shown = {m.subject: d.fmt(*m.measurement()) for m in d.markups()}   # what the Markups List shows
+    assert units == {"Length": "ft", "Perimeter": "ft", "Diameter": "ft", "Area": "ft²", "Cut Area": "ft²",
+                     "Volume": "ft³", "Angle": "°", "Door": "ea"}
+    assert all(shown[s].endswith(u) for s, u in units.items())
 
 
 # ---------- digital signatures ----------
