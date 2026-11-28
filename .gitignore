@@ -46,3 +46,6 @@ Thumbs.db
 
 # Decision trails from pstack show-me-your-work
 .audit/
+
+# Verification runs (.claude/skills/verify): scratch work and kept evidence
+.verify/
