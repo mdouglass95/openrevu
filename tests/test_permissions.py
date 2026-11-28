@@ -97,6 +97,18 @@ def test_a_compare_overlay_of_a_protected_pdf_has_no_guessable_owner_password(tm
     assert not owner_rights(out, "user-pw-owner")
 
 
+def test_pdfa_export_of_a_restricted_pdf_warns_that_the_restrictions_are_dropped(tmp_path, capsys):
+    from openrevu import pdfa
+    from openrevu.cli import main
+    if not pdfa.available():
+        pytest.skip("Ghostscript not installed")
+    assert main(["pdfa", make_pdf(tmp_path / "issued.pdf"), str(tmp_path / "a.pdf")]) == 0
+    assert "Warning: the PDF/A copy does not keep this file's restrictions" in capsys.readouterr().out
+    # an encrypted file that restricts nothing loses nothing, so it gets no warning
+    assert main(["pdfa", make_pdf(tmp_path / "open.pdf", permissions=-4), str(tmp_path / "b.pdf")]) == 0
+    assert "restrictions" not in capsys.readouterr().out
+
+
 # ---------- GUI: the restriction notice and Save making a copy ----------
 @pytest.fixture(scope="module")
 def app():
