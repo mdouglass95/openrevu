@@ -107,6 +107,20 @@ def test_unicode_titles_survive(tmp_path):
     assert r.sheet_info(0)["title"].startswith("Plan (étage)") and r.sheet_info(0)["discipline"] == "Électricité (E)"
 
 
+def test_a_first_revision_keeps_the_detected_title(v1, tmp_path):
+    d = Document(v1)
+    d.add_revision(0, "A", "Issued", date="2026-01-15")
+    assert d.sheet_table()[0]["title"] == "Ground floor plan"
+    csvp = tmp_path / "idx.csv"; d.export_sheet_index_csv(str(csvp))
+    assert list(csv.reader(open(csvp, encoding="utf-8")))[1][1:5] == ["A-101", "Ground floor plan", "", "A"]
+
+
+def test_renumbering_a_sheet_keeps_the_detected_title(v1):
+    d = Document(v1)
+    d.set_sheet(1, number="A-900")
+    assert (d.sheet_table()[1]["number"], d.sheet_table()[1]["title"]) == ("A-900", "First floor plan")
+
+
 def test_sheet_index_csv_and_index_pages_with_links(v1, tmp_path):
     d = Document(v1)
     d.detect_sheets(); d.add_revision(1, "C", "stairs", date="2026-02-02")
