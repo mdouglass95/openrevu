@@ -68,8 +68,11 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
-def write(doc_id: str, data: bytes, original_path: str | None, title: str, encrypted: bool) -> None:
-    """Write a snapshot. The files are replaced in one step, so a crash while writing never leaves half a file."""
+def write(doc_id: str, data: bytes, original_path: str | None, title: str, encrypted: bool,
+          disk: tuple[int, int] | None = None) -> None:
+    """Write a snapshot. The files are replaced in one step, so a crash while writing never leaves half a file.
+    `disk` is the original file's (modification time in ns, size) when the document last read or wrote it, so a
+    save after recovery can tell whether another program changed that file since."""
     pdf, meta = _paths(doc_id)
     def write_bytes(tmp):
         with open(tmp, "wb") as f:
@@ -78,7 +81,7 @@ def write(doc_id: str, data: bytes, original_path: str | None, title: str, encry
     def write_meta(tmp):
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"id": doc_id, "pid": os.getpid(), "path": original_path, "title": title,
-                       "time": time.time(), "encrypted": encrypted}, f)
+                       "time": time.time(), "encrypted": encrypted, "disk": disk}, f)
     replace_file(pdf, write_bytes)
     replace_file(meta, write_meta)
 
@@ -90,11 +93,12 @@ _lock = threading.Lock()
 _pending: dict[str, list[concurrent.futures.Future]] = {}     # document id -> its queued or running writes
 
 
-def write_later(doc_id: str, data: bytes, original_path: str | None, title: str, encrypted: bool) -> concurrent.futures.Future:
+def write_later(doc_id: str, data: bytes, original_path: str | None, title: str, encrypted: bool,
+                disk: tuple[int, int] | None = None) -> concurrent.futures.Future:
     """Queue write() on the worker thread and return its Future. The Future raises what write() raised.
     Its done-callbacks run on the worker thread (or, for a write that remove() cancels, on the caller's)."""
     with _lock:      # write is looked up when the job runs, so tests can replace it
-        fut = _writer.submit(lambda: write(doc_id, data, original_path, title, encrypted))
+        fut = _writer.submit(lambda: write(doc_id, data, original_path, title, encrypted, disk))
         _pending.setdefault(doc_id, []).append(fut)
 
     def forget(f):
@@ -135,10 +139,17 @@ def _valid(m) -> bool:
             and isinstance(m.get("time"), (int, float)) and isinstance(m.get("title", ""), str))
 
 
+def _parse_disk(v) -> tuple[int, int] | None:
+    """The "disk" entry as write() stored it; None if it is missing (a snapshot of an older version) or malformed."""
+    if isinstance(v, list) and len(v) == 2 and all(type(x) is int for x in v):
+        return v[0], v[1]
+    return None
+
+
 def entries(own_ids=()) -> list[dict]:
     """Snapshots that this session may offer, newest first. Each has the keys of the metadata file plus "file"
-    (the snapshot PDF). Not offered: snapshots of documents that are open in this session (own_ids), and snapshots
-    of another OpenRevu that is still running. Damaged entries and old leftovers are removed."""
+    (the snapshot PDF), with "disk" as a tuple or None. Not offered: snapshots of documents that are open in this
+    session (own_ids), and snapshots of another OpenRevu that is still running. Damaged entries and old leftovers are removed."""
     out = []
     d = recovery_dir()
     names = os.listdir(d)
@@ -166,6 +177,7 @@ def entries(own_ids=()) -> list[dict]:
         if m["pid"] != os.getpid() and pid_alive(m["pid"]):
             continue                         # another running OpenRevu owns this one
         m["file"] = pdf
+        m["disk"] = _parse_disk(m.get("disk"))
         out.append(m)
     now = time.time()
     for name in names:                       # leftovers: an interrupted write, or a snapshot without its description

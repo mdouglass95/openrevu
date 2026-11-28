@@ -609,6 +609,7 @@ class Document(SheetOps, PageOps):
         if encrypted and not auth:
             raise PermissionError("password required or incorrect")
         self.path = path
+        self.suggested_path = None   # set by recovered_from(): the file a recovered document was made from
         self._password = password if encrypted else None  # re-applied on save so protection is never silently dropped
         is_owner = bool(auth & 4)                # authenticate() sets bit 4 for the owner password
         # What this user may do: everything for an unencrypted file or the owner, else what the file allows.
@@ -1454,15 +1455,24 @@ class Document(SheetOps, PageOps):
     def render(self, pno, zoom=1.0, clip=None) -> fitz.Pixmap:
         return self._page(pno).get_pixmap(matrix=fitz.Matrix(zoom, zoom), annots=True, clip=clip)
 
+    def recovered_from(self, path: str | None, disk: tuple[int, int] | None) -> None:
+        """This document was restored from a crash snapshot of the file at `path`, whose (modification time in ns,
+        size) was `disk` when the document last read or wrote it (None: not known). It has no file of its own until
+        saved. Saving it back to `path` is checked for changes by another program as an in-place save is."""
+        self.path, self.suggested_path, self._disk = None, path, disk
+        self.modified = True
+
     def save(self, path=None, force=False, **opts):
         """Save (to `path`, or in place). A document opened with a password stays encrypted with it.
-        An in-place save raises FileChangedError if another program changed the file since it was opened or last
-        saved; `force=True` overwrites it anyway. A file deleted meanwhile is simply written again."""
+        A save over the file the document came from (its own, or a recovered document's original) raises
+        FileChangedError if another program changed that file since it was opened or last saved; `force=True`
+        overwrites it anyway. A file deleted meanwhile is simply written again."""
         path = path or self.path
         if path is None:
             raise ValueError("no path")
         in_place = self.path is not None and same_file(path, self.path)
-        if in_place and not force:
+        origin = self.path or self.suggested_path
+        if origin and same_file(path, origin) and not force:
             now = _disk_state(path)
             if now is not None and self._disk is not None and now != self._disk:
                 raise FileChangedError(f"The file was changed by another program since you opened it: {path}")

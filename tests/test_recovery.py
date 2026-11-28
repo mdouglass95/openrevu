@@ -387,3 +387,76 @@ def test_a_failed_snapshot_replace_goes_to_the_status_bar(app, pdf, isolated_rec
     wait_until(app, lambda: "Autosave failed" in w.statusBar().currentMessage())
     recovery.wait()
     assert [f for f in files(isolated_recovery_dir) if f.endswith(".tmp")] == []
+
+
+# ---------- saving recovered work over its original (#57) ----------
+from tests.test_external_change import answer_with, colleague_edits  # noqa: E402
+
+
+def recover_and_save_to_original(monkeypatch, isolated_recovery_dir, pdf, *, edit_before_snapshot=False):
+    """Edit `pdf`, crash, restart, recover, then press Ctrl+S and accept the original's name in the file dialog.
+    The edits after the crash are made by the caller. Returns the new window, before the save."""
+    w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change()
+    if edit_before_snapshot:
+        colleague_edits(pdf)
+    autosave(w); crash(w)
+    as_dead_session(isolated_recovery_dir)
+    w2 = Main(); choose(monkeypatch, "Recover")
+    assert w2.offer_recovery() == 1
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (pdf, "")))
+    return w2
+
+
+@pytest.mark.parametrize("before_snapshot", [False, True], ids=["after the crash", "before the snapshot"])
+def test_saving_recovered_work_over_an_original_another_program_changed_asks_first(
+        app, pdf, isolated_recovery_dir, monkeypatch, before_snapshot):
+    w = recover_and_save_to_original(monkeypatch, isolated_recovery_dir, pdf, edit_before_snapshot=before_snapshot)
+    if not before_snapshot:
+        colleague_edits(pdf)
+    theirs = open(pdf, "rb").read()
+    seen = answer_with(monkeypatch, "Cancel")
+    assert w._save(w.doc) is False
+    assert seen["asked"] == 1 and seen["text"].startswith("The file was changed by another program")
+    assert open(pdf, "rb").read() == theirs and w.doc.modified     # the colleague's edits are still there
+
+    answer_with(monkeypatch, "Overwrite")
+    assert w._save(w.doc) is True
+    assert len(Document(pdf).markups()) == 1 and not w.doc.modified
+
+
+def test_saving_recovered_work_over_an_unchanged_original_does_not_ask(app, pdf, isolated_recovery_dir, monkeypatch):
+    w = recover_and_save_to_original(monkeypatch, isolated_recovery_dir, pdf)
+    seen = answer_with(monkeypatch, "Cancel")
+    assert w._save(w.doc) is True
+    assert seen["asked"] == 0 and len(Document(pdf).markups()) == 1
+
+
+def test_saving_recovered_work_over_an_original_deleted_since_the_crash_writes_it_again(
+        app, pdf, isolated_recovery_dir, monkeypatch):
+    w = recover_and_save_to_original(monkeypatch, isolated_recovery_dir, pdf)
+    os.remove(pdf)                                                  # nothing of anyone else's can be lost
+    seen = answer_with(monkeypatch, "Cancel")
+    assert w._save(w.doc) is True
+    assert seen["asked"] == 0 and len(Document(pdf).markups()) == 1
+
+
+@pytest.mark.parametrize("disk", [None, "garbage", 7, [1]], ids=["older version", "text", "number", "short list"])
+def test_a_snapshot_without_a_readable_original_state_still_recovers_and_saves(
+        app, pdf, isolated_recovery_dir, monkeypatch, disk):
+    # Older versions did not record the original's state, so a change to it cannot be detected.
+    w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change(); autosave(w); crash(w)
+    as_dead_session(isolated_recovery_dir)
+    for name in os.listdir(isolated_recovery_dir):
+        if name.endswith(".json"):
+            p = os.path.join(isolated_recovery_dir, name)
+            m = json.load(open(p)); m.pop("disk", None)
+            if disk is not None:
+                m["disk"] = disk
+            json.dump(m, open(p, "w"))
+    colleague_edits(pdf)
+    w2 = Main(); choose(monkeypatch, "Recover")
+    assert w2.offer_recovery() == 1
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (pdf, "")))
+    seen = answer_with(monkeypatch, "Cancel")
+    assert w2._save(w2.doc) is True
+    assert seen["asked"] == 0 and len(Document(pdf).markups()) == 1
