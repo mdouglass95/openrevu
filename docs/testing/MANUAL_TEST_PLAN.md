@@ -265,6 +265,8 @@ a PDF with red and blue marks. **Save report (CSV)…** works. Repeat with **By 
 
 **T35 Page operations.** **Document** menu: insert a blank page, delete a page, rotate pages (`1-2`, 90), move a page, crop a page
 (type four numbers), extract pages, split. Check each result. The thumbnails and the page count must follow. Ctrl+Z after each.
+Select a markup on page 3, then delete page 1 and move page 2 to position 1: the markup stays selected on its new page. Delete its own
+page: the selection goes.
 
 **T36 Header, watermark, numbers.** Add a header/footer with `Page {page} of {pages}`, a text watermark `DRAFT`, and Bates numbers.
 Expect them on every page, upright, also on `rotated.pdf`.
