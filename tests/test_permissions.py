@@ -114,11 +114,11 @@ def gui(app, tmp_path):
 
 
 def test_a_restricted_pdf_shows_a_notice(gui, tmp_path):
-    assert gui.lbl_restricted.isHidden()
+    assert gui.restricted_notice.isHidden()
     gui.open(make_pdf(tmp_path / "issued.pdf"))
-    assert not gui.lbl_restricted.isHidden() and "restricts editing" in gui.lbl_restricted.text()
+    assert not gui.restricted_notice.isHidden() and "restricts editing" in gui.restricted_notice.text()
     gui.tabs.setCurrentIndex(0)                               # back to the unrestricted file
-    assert gui.lbl_restricted.isHidden()
+    assert gui.restricted_notice.isHidden()
 
 
 def test_saving_a_restricted_pdf_asks_for_a_new_file_name(gui, tmp_path, monkeypatch):

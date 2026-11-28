@@ -635,6 +635,8 @@ class Main(DocumentOps, W.QMainWindow):
         self._act(f, "Save", self.save, "Ctrl+S", tool_icon("save"))
         self._act(f, "Save As…", self.save_as, "Ctrl+Shift+S")
         self._act(f, "Save encrypted copy…", self.save_encrypted)
+        self.act_owner_password = self._act(f, "Enter owner password…", self.enter_owner_password)
+        self.act_owner_password.setEnabled(False)   # until a restricted PDF is the current tab
         self._act(f, "Optimize / compress copy…", self.optimize)
         self._act(f, "Export as PDF/A…", self.export_pdfa)
         f.addSeparator()
@@ -905,17 +907,22 @@ class Main(DocumentOps, W.QMainWindow):
         for lbl in (self.lbl_scale, self.lbl_page, self.lbl_zoom):
             lbl.setStyleSheet("padding: 0 10px;")
             sb.addPermanentWidget(lbl)
-        self.lbl_restricted = W.QLabel("This PDF restricts editing")
-        self.lbl_restricted.setStyleSheet("padding: 0 10px; color: white; background: #b35900;")
-        self.lbl_restricted.setToolTip("The author of this PDF does not allow markups or changes. You can still add them, "
-                                       "but Save asks for a new file name, so the original stays as issued. "
-                                       "The copy keeps the same restrictions.")
-        self.lbl_restricted.hide()
-        sb.addPermanentWidget(self.lbl_restricted)
+        self.restricted_notice = W.QPushButton("This PDF restricts editing")
+        self.restricted_notice.setFlat(True)
+        self.restricted_notice.setCursor(QtCore.Qt.PointingHandCursor)
+        self.restricted_notice.setStyleSheet("padding: 0 10px; border: none; color: white; background: #b35900;")
+        self.restricted_notice.setToolTip("The author of this PDF does not allow markups or changes. You can still add "
+                                          "them, but Save asks for a new file name, so the original stays as issued. "
+                                          "The copy keeps the same restrictions. Click to enter the owner password.")
+        self.restricted_notice.clicked.connect(self.enter_owner_password)
+        self.restricted_notice.hide()
+        sb.addPermanentWidget(self.restricted_notice)
 
     def _update_status_widgets(self):
         cv = self.cv
-        self.lbl_restricted.setVisible(bool(cv) and cv.doc.restricted)
+        restricted = bool(cv) and cv.doc.restricted
+        self.restricted_notice.setVisible(restricted)
+        self.act_owner_password.setEnabled(restricted)
         if not cv:
             for lbl in (self.lbl_scale, self.lbl_page, self.lbl_zoom):
                 lbl.setText("")
@@ -1134,6 +1141,18 @@ class Main(DocumentOps, W.QMainWindow):
                     self._saved(self.doc)
                     self.tabs.setTabText(self.tabs.currentIndex(), os.path.basename(p))
                     self.prefs.add_recent(p)
+
+    def enter_owner_password(self):
+        """Lift a restricted PDF's restriction with its owner password, so Save writes the file in place."""
+        pw, ok = W.QInputDialog.getText(self, "Owner password", f"Owner password for {self._title().lstrip('*')}:",
+                                        W.QLineEdit.Password)
+        if not ok:
+            return
+        if not self.doc.unlock(pw):
+            W.QMessageBox.warning(self, "Owner password", "That is not the owner password. The PDF still restricts editing.")
+            return
+        self._update_status_widgets()
+        self.statusBar().showMessage("Owner password accepted: Save now writes to this file", 5000)
 
     def save_encrypted(self):
         if not self._need_doc():
