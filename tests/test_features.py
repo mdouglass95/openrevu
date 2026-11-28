@@ -625,6 +625,19 @@ def test_summary_csv_names_each_unit_as_the_markups_list_does(pdf, tmp_path):
     assert all(shown[s].endswith(u) for s, u in units.items())
 
 
+def test_markups_csv_names_each_unit_as_the_markups_list_does(pdf, tmp_path):
+    d = Document(pdf)
+    d.set_scale(Scale("ft", 0.1))
+    d.add_length(0, [(10, 10), (110, 10)])
+    d.add_area(0, [(10, 10), (110, 10), (110, 110), (10, 110)])
+    d.add_area(0, [(10, 10), (110, 10), (110, 110), (10, 110)], subject="Volume", depth=2)
+    d.add_angle(0, (110, 10), (10, 10), (10, 110))
+    d.add_count(0, (5, 5), group="Door")
+    p = tmp_path / "m.csv"; d.export_csv(str(p))
+    units = {row["subject"]: row["unit"] for row in csv.DictReader(p.open(encoding="utf-8"))}
+    assert units == {"Length": "ft", "Area": "ft²", "Volume": "ft³", "Angle": "°", "Door": "ea"}
+
+
 # ---------- digital signatures ----------
 def test_digital_signature(pdf, tmp_path, selfsigned):
     from openrevu.sign import list_signatures, sign_pdf
