@@ -210,3 +210,20 @@ def test_selection_on_a_deleted_page_is_dropped_on_reload(app, tmp_path):
     cv.doc.delete_pages([1])
     cv.reload()
     assert cv.selected is None
+
+
+@pytest.mark.parametrize("change, new_page", [
+    (lambda d: d.insert_blank(0), 3),
+    (lambda d: d.delete_pages([0]), 1),
+    (lambda d: d.move_page(2, 0), 0),
+    (lambda d: d.reorder([2, 1, 0]), 0),
+])
+def test_selection_follows_its_markup_to_a_new_page_number(app, tmp_path, change, new_page):
+    """Issue #60: a page change before the selected markup's page dropped the selection."""
+    cv = make_canvas(tmp_path, pages=((612, 792),) * 3)
+    cv.doc.add_rect(2, fitz.Rect(100, 100, 200, 200))
+    cv.select(cv.doc.markups()[0])
+    xref = cv.selected.xref
+    change(cv.doc)
+    cv.reload()
+    assert cv.selected is not None and (cv.selected.xref, cv.selected.page_no) == (xref, new_page)

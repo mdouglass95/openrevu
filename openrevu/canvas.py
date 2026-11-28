@@ -1,6 +1,7 @@
 """Continuous-scroll PDF canvas with markup tools, selection, move and resize."""
 from __future__ import annotations
 
+import itertools
 import math
 
 import pymupdf as fitz  # PyMuPDF
@@ -499,8 +500,10 @@ class Canvas(W.QGraphicsView):
         self._pg = None
 
     def _refind(self, m: Markup):
-        xref, pno = m._annot.xref if m._gen == self.doc.generation else m._xref, m.page_no
-        return next((x for x in self.doc.markups(page=pno) if x.xref == xref), None)   # None if its page was deleted
+        # A page change keeps the xref but can renumber the page, so look on the old page first, then on every page.
+        xref = m._annot.xref if m._gen == self.doc.generation else m._xref
+        pages = itertools.chain([m.page_no], range(self.doc.page_count))
+        return next((x for p in pages for x in self.doc.markups(page=p) if x.xref == xref), None)   # None if its page was deleted
 
     def _commit_drag(self, pno, a, b, pts):
         r, t = fitz.Rect(a, b).normalize(), self.tool
