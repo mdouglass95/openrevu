@@ -460,3 +460,26 @@ def test_a_snapshot_without_a_readable_original_state_still_recovers_and_saves(
     seen = answer_with(monkeypatch, "Cancel")
     assert w2._save(w2.doc) is True
     assert seen["asked"] == 0 and len(Document(pdf).markups()) == 1
+
+
+def test_recovered_work_autosaved_and_crashed_again_still_knows_its_original(
+        app, pdf, isolated_recovery_dir, monkeypatch):
+    # #76: the second session's snapshot of a recovered document must keep the original file and its state.
+    w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change(); autosave(w); crash(w)
+    as_dead_session(isolated_recovery_dir)
+    w2 = Main(); choose(monkeypatch, "Recover"); assert w2.offer_recovery() == 1
+    autosave(w2); crash(w2)                                           # this time the new session snapshots first
+    as_dead_session(isolated_recovery_dir)
+    w3 = Main(); choose(monkeypatch, "Recover"); assert w3.offer_recovery() == 1
+    assert w3.tabs.tabText(w3.tabs.currentIndex()).lstrip("*") == "work.pdf (recovered)"
+
+    starts = []
+    def dialog(parent, title, start, *a):
+        starts.append(start)
+        return pdf, ""
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(dialog))
+    colleague_edits(pdf)
+    seen = answer_with(monkeypatch, "Cancel")
+    assert w3._save(w3.doc) is False
+    assert starts == [pdf]
+    assert seen["asked"] == 1 and seen["text"].startswith("The file was changed by another program")
