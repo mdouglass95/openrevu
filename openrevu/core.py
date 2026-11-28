@@ -1438,7 +1438,7 @@ class Document(SheetOps, PageOps):
         return out
 
     def export_csv(self, path):
-        with open(path, "w", newline="") as f:
+        with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             w.writerow(["page", "type", "subject", "author", "status", "comment", "replies", "measure", "value", "unit"]
                        + [c["name"] for c in self.columns])
@@ -1447,7 +1447,7 @@ class Document(SheetOps, PageOps):
                 cv = m.custom()
                 w.writerow([m.page_no + 1, m.kind, m.subject, m.author, m.status, m.comment,
                             " | ".join(f"{a}: {t}" for a, t in m.replies()),
-                            r[0] if r else "", f"{r[1]:.4f}" if r else "", r[2] if r else ""]
+                            r[0] if r else "", f"{r[1]:.4f}" if r else "", unit_label(r[0], r[2]) if r else ""]
                            + [cv.get(c["name"], "") for c in self.columns])
 
     def export_summary_csv(self, path):
