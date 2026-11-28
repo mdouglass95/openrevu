@@ -780,7 +780,7 @@ def test_save_anyway_overwrites_a_signed_pdf_and_asks_only_once(signed_win, sign
     seen = answer_with(monkeypatch, "Save anyway")
     w.save()
     assert seen["asked"] == 1 and len(Document(signed_pdf).markups()) == 1
-    assert w.doc.signed          # the in-place save reopened the file; it still holds the (now broken) signatures
+    assert not w.doc.signed      # the in-place save rewrote the file: its signatures are broken
 
     w.doc.add_rect(0, fitz.Rect(300, 300, 400, 400))
     w.save()

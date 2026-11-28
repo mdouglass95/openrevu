@@ -327,6 +327,9 @@ In that tab add a markup, press Ctrl+S, choose **Save anyway**: the file is over
 Open a fresh copy of `signed.pdf`. Choose **File > Optimize / compress copy…** and pick `signed.pdf` itself: expect the same
 warning. **Save As…** opens the file dialog again; **Cancel** writes nothing. Save encrypted copy, Save As, Extract pages,
 PDF/A, Compare overlay and Markup Summary ask the same way.
+Open a fresh copy of `signed.pdf`. Choose **File > Optimize / compress copy…**, pick `signed.pdf` itself and choose
+**Save anyway**. Add a markup and press Ctrl+S: no signature warning, only "You replaced this file with an optimized copy…".
+Save encrypted copy and PDF/A behave the same way.
 
 **T48 Autosave and recovery.** Start the program with `OPENREVU_AUTOSAVE_SECONDS=5 openrevu`. Open a file, add two markups, wait 10 seconds.
 Kill the program hard (`kill -9 <pid>`, or end the task). Start it again. Expect a question: "OpenRevu closed unexpectedly last time…".
