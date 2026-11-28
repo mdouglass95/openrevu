@@ -111,10 +111,19 @@ class SheetOps:
         return {"number": number or "", "title": title or "", "discipline": rec.get("discipline", ""),
                 "revisions": list(rec.get("revisions", [])), "stored": bool(rec)}
 
+    def _keep_shown_values(self, pno: int, rec: dict) -> None:
+        """Copy the number and title the page shows now into rec when rec has no number yet. Call it before storing
+        a first number: a stored number turns detection off (see sheet_info), so a title left out would read as empty."""
+        if not rec.get("number"):
+            info = self.sheet_info(pno)
+            rec["number"], rec["title"] = info["number"], info["title"]
+
     @mutates
     def set_sheet(self, pno: int, number=None, title=None, discipline=None):
         self._check([pno])
         rec = read_record(self.doc, pno)
+        if number and number.strip():
+            self._keep_shown_values(pno, rec)
         for name, value in (("number", number), ("title", title), ("discipline", discipline)):
             if value is not None:
                 if name == "number" and value.strip():
@@ -159,8 +168,7 @@ class SheetOps:
             datetime.date.fromisoformat(date)  # raises ValueError for a bad date
         revs.append({"rev": rev, "date": date or datetime.date.today().isoformat(), "description": description.strip()})
         rec["revisions"] = revs
-        if not rec.get("number"):
-            rec["number"] = self.sheet_info(pno)["number"]
+        self._keep_shown_values(pno, rec)
         write_record(self.doc, pno, {k: v for k, v in rec.items() if v not in ("", None)})
 
     @mutates

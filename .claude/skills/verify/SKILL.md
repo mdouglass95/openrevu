@@ -31,7 +31,7 @@ Shipped journeys, one per proven path in the feature map:
 |---|---|
 | `journeys/markup_roundtrip.py` | draw, select, edit properties, delete, undo, save, read back with `openrevu-cli csv` |
 | `journeys/measure_calibrate.py` | calibrate, Length, Fill room area, Measurement summary, summary CSV export |
-| `journeys/sheets_revision.py` | Sheets panel, multi-select, Revision form, sheet list CSV. Fails until issue #65 is fixed |
+| `journeys/sheets_revision.py` | Sheets panel, multi-select, Revision form, sheet list CSV |
 | `journeys/open_navigate.py` | start page, Open PDF with a password, PgDown, zoom, Ctrl+W, reopen from Recent files |
 | `journeys/crash_recovery.py` | autosave, a simulated crash, the recovery offer, saving the recovered copy |
 | `journeys/cli_batch.py` | `openrevu-cli` csv, compare, protected input, error exit codes (no window) |

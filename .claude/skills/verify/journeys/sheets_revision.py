@@ -26,7 +26,7 @@ def journey(s):
     rows = s.table(s.w.sheets_table)
     s.check([r[4] for r in rows] == ["A", "A", ""], f"Rev column is A, A, blank: {rows}")
     s.check([r[2] for r in rows] == ["Ground floor plan", "First floor plan", "Roof framing plan"],
-            f"titles survive the revision (fails until issue #65 is fixed): {[r[2] for r in rows]}")
+            f"titles survive the revision: {[r[2] for r in rows]}")
     s.shot("revisions")
 
     out = s.work / "sheets.csv"
