@@ -347,6 +347,8 @@ label at the right of the status bar; point at it to read why. Switch to another
 Save as `restricted_copy.pdf`. The original `restricted.pdf` must be unchanged. Add another markup and press Ctrl+S: it saves
 `restricted_copy.pdf` without asking again. Open `restricted_copy.pdf` in a different PDF viewer and look at its security
 properties: it is still encrypted and still allows printing only.
+If Ghostscript is installed, choose **File > Export as PDF/A…** on `restricted.pdf`. The result message ends with a warning
+that the PDF/A copy does not keep this file's restrictions on printing, editing and copying.
 
 **T52 File changed by another program.** Copy `plan_v1.pdf` to `shared.pdf` and open `shared.pdf`. Add a markup. In a
 different PDF editor, change `shared.pdf` (add a comment or a page) and save it there. Back in OpenRevu, press Ctrl+S.
