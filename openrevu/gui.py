@@ -1043,12 +1043,13 @@ class Main(DocumentOps, W.QMainWindow):
         box.exec_()
         return {save_as: "save_as", anyway: "anyway"}.get(box.clickedButton(), "cancel")
 
-    def _ask_file_changed(self) -> str:
-        """Another program changed the file since it was opened or saved. Returns 'overwrite', 'save_as' or 'cancel'."""
+    def _ask_file_changed(self, e: FileChangedError) -> str:
+        """The file changed since it was opened or saved. Returns 'overwrite', 'save_as' or 'cancel'."""
         box = W.QMessageBox(self)
         box.setWindowTitle("File changed on disk")
         box.setIcon(W.QMessageBox.Warning)
-        box.setText("The file was changed by another program since you opened it. Overwriting it loses those changes.")
+        box.setText(e.own_write or
+                    "The file was changed by another program since you opened it. Overwriting it loses those changes.")
         overwrite = box.addButton("Overwrite", W.QMessageBox.DestructiveRole)
         save_as = box.addButton("Save As…", W.QMessageBox.AcceptRole)
         box.addButton("Cancel", W.QMessageBox.RejectRole)
@@ -1086,8 +1087,8 @@ class Main(DocumentOps, W.QMainWindow):
             if in_place:
                 try:
                     d.save()
-                except FileChangedError:
-                    choice = self._ask_file_changed()
+                except FileChangedError as e:
+                    choice = self._ask_file_changed(e)
                     if choice == "cancel":
                         return False
                     if choice == "overwrite":

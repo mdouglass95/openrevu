@@ -345,6 +345,8 @@ class PageOps:
         self._store_scales()
         self.doc.save(path, encryption=fitz.PDF_ENCRYPT_AES_256, user_pw=user_pw,
                       owner_pw=owner_pw or secrets.token_urlsafe(24), permissions=perm, garbage=3, deflate=True)
+        self._wrote_copy(path, "an encrypted copy", "the open document, protected as it was when you opened it"
+                         if self._encryption_kwargs() else "the open, unencrypted document")
 
     @mutates
     def set_metadata(self, **fields):
@@ -374,6 +376,7 @@ class PageOps:
             before = [pg.get_text().strip() for pg in tmpdoc]
             tmpdoc.close()
             rep = pdfa.convert(src, path, level)
+            self._wrote_copy(path, "a PDF/A copy", "the open document, which is not PDF/A")
             if self._password:
                 rep.warnings.append("the PDF/A copy is not password protected, because PDF/A does not allow encryption. "
                                     "Keep the file in a safe place.")
@@ -424,6 +427,7 @@ class PageOps:
         before = len(self.doc.tobytes())
         self.doc.save(path, garbage=4, clean=True, deflate=True, deflate_images=True, deflate_fonts=True,
                       **self._encryption_kwargs())
+        self._wrote_copy(path, "an optimized copy", "the open, unoptimized document")
         return before, os.path.getsize(path)
 
     # ---- forms ----
