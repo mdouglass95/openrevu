@@ -217,3 +217,76 @@ def test_a_save_to_another_spelling_of_the_same_file_is_checked(tmp_path, monkey
         with pytest.raises(FileChangedError):
             d.save(spelling)
     assert d.path == "a.pdf"
+
+
+# --- Issue #58: a copy written over the document's own file is OpenRevu's write, not another program's ---
+
+from openrevu import pdfa  # noqa: E402
+
+
+def encrypt_over_own_file(win, monkeypatch):
+    monkeypatch.setattr(QtWidgets.QInputDialog, "getText", staticmethod(lambda *a, **k: ("pw", True)))
+    win.save_encrypted()
+
+
+def optimize_over_own_file(win, monkeypatch):
+    win.optimize()
+
+
+def pdfa_over_own_file(win, monkeypatch):
+    monkeypatch.setattr(QtWidgets.QInputDialog, "getItem", staticmethod(lambda *a, **k: ("2b", True)))
+    for name in ("information", "warning"):   # the report shown after the export
+        monkeypatch.setattr(QtWidgets.QMessageBox, name, staticmethod(lambda *a, **k: None))
+    win.export_pdfa()
+
+
+@pytest.mark.parametrize("write, expected", [
+    (encrypt_over_own_file,
+     "You replaced this file with an encrypted copy. Saving overwrites it with the open, unencrypted document."),
+    (optimize_over_own_file,
+     "You replaced this file with an optimized copy. Saving overwrites it with the open, unoptimized document."),
+    pytest.param(pdfa_over_own_file,
+                 "You replaced this file with a PDF/A copy. Saving overwrites it with the open document, which is not PDF/A.",
+                 marks=pytest.mark.skipif(not pdfa.available(), reason="Ghostscript not installed")),
+])
+def test_gui_save_after_writing_a_copy_over_the_documents_own_file_names_that_copy(win, pdf, monkeypatch,
+                                                                                    write, expected):
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (pdf, "")))
+    write(win, monkeypatch)
+    copy = Path(pdf).read_bytes()
+    seen = answer_with(monkeypatch, "Cancel")
+    assert win._save(win.doc) is False
+    assert seen["asked"] == 1 and seen["text"] == expected and seen["default"] == "Save As…"
+    assert Path(pdf).read_bytes() == copy and win.doc.modified
+
+
+def test_a_change_by_another_program_after_writing_a_copy_over_the_own_file_is_reported_as_such(pdf):
+    d = Document(pdf)
+    d.optimize(pdf)
+    colleague_edits(pdf)
+    with pytest.raises(FileChangedError) as e:
+        d.save()
+    assert e.value.own_write is None
+
+
+def test_after_overwriting_the_copy_the_next_save_does_not_ask(pdf):
+    d = Document(pdf)
+    d.optimize(pdf)
+    with pytest.raises(FileChangedError) as e:
+        d.save()
+    assert e.value.own_write
+    d.save(force=True)
+    d.add_rect(0, fitz.Rect(100, 100, 200, 200))
+    d.save()
+    assert len(Document(pdf).markups()) == 1
+
+
+def test_an_encrypted_copy_over_a_password_protected_documents_own_file_does_not_call_it_unencrypted(pdf, tmp_path):
+    protected = str(tmp_path / "p.pdf")
+    Document(pdf).save_encrypted(protected, "old")
+    d = Document(protected, "old")
+    d.save_encrypted(protected, "new")
+    with pytest.raises(FileChangedError) as e:
+        d.save()
+    assert e.value.own_write == ("You replaced this file with an encrypted copy. Saving overwrites it with the open "
+                                 "document, protected as it was when you opened it.")

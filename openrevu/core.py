@@ -591,7 +591,13 @@ class Markup:
 
 
 class FileChangedError(OSError):
-    """An in-place save found that another program changed the file since this document opened or last saved it."""
+    """An in-place save found that the file changed since this document opened or last saved it.
+    `own_write` is None if another program changed it. If this document last wrote a copy over its own file (an
+    encrypted, optimized or PDF/A copy), `own_write` is a sentence that names that copy for the user."""
+
+    def __init__(self, message: str, own_write: str | None = None):
+        super().__init__(message)
+        self.own_write = own_write
 
 
 class Document(SheetOps, PageOps):
@@ -599,6 +605,8 @@ class Document(SheetOps, PageOps):
     def __init__(self, path: str | None = None, password: str | None = None):
         # Stat before reading: a change between the two then shows as a change at save, never goes unnoticed.
         self._disk = _disk_state(path)
+        # (sentence for the user, file state it left) of the last copy written over this document's own file
+        self._own_copy: tuple[str, tuple[int, int] | None] | None = None
         data = self._read(path) if path else None
         self.doc = fitz.open("pdf", data) if path else fitz.open()
         encrypted = bool(self.doc.needs_pass)
@@ -1465,6 +1473,8 @@ class Document(SheetOps, PageOps):
         if in_place and not force:
             now = _disk_state(path)
             if now is not None and self._disk is not None and now != self._disk:
+                if self._own_copy and self._own_copy[1] == now:
+                    raise FileChangedError(self._own_copy[0], own_write=self._own_copy[0])
                 raise FileChangedError(f"The file was changed by another program since you opened it: {path}")
         self._store_scales()
         kw = {"garbage": 3, "deflate": True, **opts}
@@ -1478,7 +1488,15 @@ class Document(SheetOps, PageOps):
             self.path = path
             self.save_as_required = False   # the new file is the user's own copy
         self._disk = _disk_state(path)
+        self._own_copy = None
         self.modified = False
+
+    def _wrote_copy(self, path, copy: str, document: str):
+        """A copy of this document was written to `path`. If that is the document's own file, the next in-place save
+        stops (see save) and tells the user it would replace `copy` with `document`."""
+        if self.path and same_file(path, self.path):
+            self._own_copy = (f"You replaced this file with {copy}. Saving overwrites it with {document}.",
+                              _disk_state(path))
 
 
 def same_file(a, b) -> bool:

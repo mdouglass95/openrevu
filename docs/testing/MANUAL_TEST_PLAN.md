@@ -357,6 +357,13 @@ change the file in the other editor once more, press Ctrl+S and choose **Overwri
 the other editor's change. Add another markup and press Ctrl+S: it saves without asking. Close the tab with unsaved changes
 after another outside change, choose **Save**, then **Cancel** in the warning: the tab stays open.
 
+Open `shared.pdf` again and add a markup. Choose **File > Save encrypted copy…**, give a password, and pick `shared.pdf`
+itself. Press Ctrl+S. Expect the same three buttons, with the text "You replaced this file with an encrypted copy. Saving
+overwrites it with the open, unencrypted document." **Cancel**: `shared.pdf` still asks for the password when you open it
+in another viewer. Do the same with **Optimize / compress copy…** ("…with an optimized copy…") and **Export as PDF/A…**
+("…with a PDF/A copy…"). After one of these copies, change `shared.pdf` in the other editor and press Ctrl+S: the
+warning says again that another program changed the file.
+
 ### H. Visual and feel (look at the whole window)
 
 Answer these as a person would. Write a sentence for each.
