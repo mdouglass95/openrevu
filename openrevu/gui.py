@@ -253,8 +253,9 @@ class Main(DocumentOps, W.QMainWindow):
                 self._autosave_more = True
                 break
             try:
-                fut = recovery.write_later(rid, d._snapshot(), d.path, self.tabs.tabText(i).lstrip("*"), bool(d._password),
-                                           d._disk)
+                # a recovered document has no path of its own yet: its snapshot names the file it was recovered from
+                fut = recovery.write_later(rid, d._snapshot(), d.path or d.suggested_path, self.tabs.tabText(i).lstrip("*"),
+                                           bool(d._password), d._disk)
             except Exception as e:   # autosave runs every minute: no failure may open a dialog each time
                 self._autosave_failed(e)
                 continue
