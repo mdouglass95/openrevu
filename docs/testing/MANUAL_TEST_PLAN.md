@@ -326,6 +326,9 @@ PDF/A, Compare overlay and Markup Summary ask the same way.
 **T48 Autosave and recovery.** Start the program with `OPENREVU_AUTOSAVE_SECONDS=5 openrevu`. Open a file, add two markups, wait 10 seconds.
 Kill the program hard (`kill -9 <pid>`, or end the task). Start it again. Expect a question: "OpenRevu closed unexpectedly last time…".
 Choose **Recover**. Expect a tab named `<file> (recovered)` with your markups. Press Ctrl+S: it asks for a file name (it must not overwrite the original silently).
+With a large file (a few hundred MB) and the 5-second interval, keep drawing and panning for 30 seconds: no pause longer than
+the snapshot itself, and no autosave starts while a mouse button is held down during a drag. Close the tab and choose
+**Discard**, then quit: the recovery folder is empty, and the next start asks nothing.
 
 **T49 Rotated page.** Open `rotated.pdf`. Draw a rectangle, a line, a cloud, a stamp, and a text box. Move and resize them. Search for text.
 Every markup must appear **where you drew it** and move the way the mouse moves.

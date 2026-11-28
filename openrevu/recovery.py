@@ -2,12 +2,22 @@
 
 While a document has unsaved changes, OpenRevu keeps a snapshot of it in the recovery folder.
 A snapshot is removed when the document is saved or closed. After a crash the snapshots stay,
-and the next start offers to restore them. A snapshot of a password-protected document is encrypted."""
+and the next start offers to restore them. A snapshot of a password-protected document is encrypted.
+
+Cost on the GUI thread. The autosave tick serializes the document there (Document._snapshot, a full tobytes), because
+PyMuPDF is not thread-safe; write_later() hands the bytes to a worker thread. On a 250 MB test file (50 pages of
+incompressible images) tobytes takes about 260 ms, the rest of the tick under 1 ms; the file write it no longer waits
+for took 250 to 650 ms. A protected document is much slower: MuPDF encrypts while it serializes, about 11 s for the
+same file. MuPDF's undo journal (doc.journal_save) is no cheaper replacement: it holds the old versions of changed
+objects, keyed to the fingerprint of the file as last written, so it cannot rebuild the current state without a full
+write of the document as well, and it does not work for documents that exist only in memory."""
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import os
 import sys
+import threading
 import time
 import uuid
 
@@ -73,7 +83,45 @@ def write(doc_id: str, data: bytes, original_path: str | None, title: str, encry
     replace_file(meta, write_meta)
 
 
+# One worker thread writes all snapshots, one after another. Two writes to the same files therefore never overlap
+# (os.replace onto a file that another thread is writing fails on Windows). Python joins the worker at exit.
+_writer = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="openrevu-autosave")
+_lock = threading.Lock()
+_pending: dict[str, list[concurrent.futures.Future]] = {}     # document id -> its queued or running writes
+
+
+def write_later(doc_id: str, data: bytes, original_path: str | None, title: str, encrypted: bool) -> concurrent.futures.Future:
+    """Queue write() on the worker thread and return its Future. The Future raises what write() raised.
+    Its done-callbacks run on the worker thread (or, for a write that remove() cancels, on the caller's)."""
+    with _lock:      # write is looked up when the job runs, so tests can replace it
+        fut = _writer.submit(lambda: write(doc_id, data, original_path, title, encrypted))
+        _pending.setdefault(doc_id, []).append(fut)
+
+    def forget(f):
+        with _lock:
+            futs = _pending.get(doc_id, [])
+            if f in futs:
+                futs.remove(f)
+                if not futs:
+                    del _pending[doc_id]
+    fut.add_done_callback(forget)
+    return fut
+
+
+def wait() -> None:
+    """Block until every queued write has finished and its done-callbacks have run. The worker runs the callbacks
+    of a job before it starts the next one, so an empty job queued last is enough."""
+    _writer.submit(lambda: None).result()
+
+
 def remove(doc_id: str) -> None:
+    """Remove a document's snapshot. Writes still queued for it are dropped and a running one is waited for,
+    so no snapshot of this document appears after remove() returns."""
+    with _lock:
+        futs = list(_pending.get(doc_id, []))
+    running = [f for f in futs if not f.cancel()]
+    if running:
+        concurrent.futures.wait(running)
     for p in _paths(doc_id):
         try:
             os.remove(p)

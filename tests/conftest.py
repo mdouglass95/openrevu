@@ -60,7 +60,9 @@ def isolated_recovery_dir(tmp_path, monkeypatch):
     """Snapshots go to a fresh folder for each test, never to the real recovery folder."""
     d = tmp_path / "recovery"
     monkeypatch.setenv("OPENREVU_RECOVERY_DIR", str(d))
-    return d
+    yield d
+    from openrevu import recovery
+    recovery.wait()      # a background write still queued must land here, before the folder setting is undone
 
 
 @pytest.fixture
