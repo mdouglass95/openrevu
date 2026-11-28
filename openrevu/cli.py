@@ -3,24 +3,16 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
-from .core import Document
+from .core import Document, same_file
 from .pages import compare_pdfs
 
 
 def _doc(a):
     d = Document(a.input, a.in_password)
-    if d.signed and _same_file(a.input, a.output):
+    if d.signed and same_file(a.input, a.output):
         print(f"warning: {a.input} is digitally signed; overwriting it invalidates the signatures", file=sys.stderr)
     return d
-
-
-def _same_file(a, b) -> bool:
-    try:
-        return Path(a).samefile(b)
-    except OSError:   # b does not exist yet
-        return False
 
 
 def main(argv=None) -> int:

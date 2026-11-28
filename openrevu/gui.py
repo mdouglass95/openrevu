@@ -12,7 +12,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets as W
 
 from . import __version__
 from .canvas import PX_PER_PT, ZOOM_MAX_PCT, ZOOM_MIN_PCT, Canvas
-from .core import STATUSES, Document
+from .core import STATUSES, Document, FileChangedError, same_file
 from .gui_ops import ERRORS, DocumentOps, parse_pages  # noqa: F401  (parse_pages re-exported)
 from .icons import tool_icon
 from . import recovery
@@ -989,14 +989,24 @@ class Main(DocumentOps, W.QMainWindow):
         box.exec_()
         return {save_as: "save_as", anyway: "anyway"}.get(box.clickedButton(), "cancel")
 
+    def _ask_file_changed(self) -> str:
+        """Another program changed the file since it was opened or saved. Returns 'overwrite', 'save_as' or 'cancel'."""
+        box = W.QMessageBox(self)
+        box.setWindowTitle("File changed on disk")
+        box.setIcon(W.QMessageBox.Warning)
+        box.setText("The file was changed by another program since you opened it. Overwriting it loses those changes.")
+        overwrite = box.addButton("Overwrite", W.QMessageBox.DestructiveRole)
+        save_as = box.addButton("Save As…", W.QMessageBox.AcceptRole)
+        box.addButton("Cancel", W.QMessageBox.RejectRole)
+        box.setDefaultButton(save_as)
+        box.exec_()
+        return {overwrite: "overwrite", save_as: "save_as"}.get(box.clickedButton(), "cancel")
+
     def _overwrites_signed_original(self, d: Document, path: str) -> bool:
         """True if writing `path` would rewrite `d`'s digitally signed file, whose signatures are still intact."""
         if not (d.signed and d.path and path) or d.recovery_id in self._rewritten:
             return False
-        try:
-            return os.path.samefile(path, d.path)
-        except OSError:   # one of them does not exist
-            return os.path.normcase(os.path.abspath(path)) == os.path.normcase(os.path.abspath(d.path))
+        return same_file(path, d.path)
 
     def _ask_pdf_path(self, title: str, start: str = "", d: Document | None = None) -> str:
         """Ask where to write a PDF made from `d` (default: the current document). If the user picks its signed original,
@@ -1020,15 +1030,24 @@ class Main(DocumentOps, W.QMainWindow):
             in_place = choice == "anyway"
         try:
             if in_place:
-                d.save()
-            else:
+                try:
+                    d.save()
+                except FileChangedError:
+                    choice = self._ask_file_changed()
+                    if choice == "cancel":
+                        return False
+                    if choice == "overwrite":
+                        d.save(force=True)
+                    else:
+                        in_place = False
+            if not in_place:
                 title = "Save a copy (this PDF restricts editing)" if d.restricted else "Save"
                 # a signed document's suggested path is its signed original: overwriting it is what the warning is about
                 start = "" if d.signed else getattr(d, "suggested_path", None) or ""
                 p = self._ask_pdf_path(title, start, d)
                 if not p:
                     return False
-                d.save(p)
+                d.save(p, force=True)   # the file dialog already asked whether to replace an existing file
                 tab = next(i for i in range(self.tabs.count()) if getattr(self.tabs.widget(i), "doc", None) is d)
                 self.tabs.setTabText(tab, os.path.basename(p))   # closing a background tab saves a doc that is not current
                 self.prefs.add_recent(p)
@@ -1056,7 +1075,8 @@ class Main(DocumentOps, W.QMainWindow):
             p = self._ask_pdf_path("Save As")
             if p:
                 self.cv.select(None)
-                if self._run(self.doc.save, p, msg=f"Saved {p}"):
+                # force: the file dialog already asked whether to replace an existing file, even this document's own
+                if self._run(self.doc.save, p, force=True, msg=f"Saved {p}"):
                     self._saved(self.doc)
                     self.tabs.setTabText(self.tabs.currentIndex(), os.path.basename(p))
                     self.prefs.add_recent(p)

@@ -590,9 +590,15 @@ class Markup:
         }
 
 
+class FileChangedError(OSError):
+    """An in-place save found that another program changed the file since this document opened or last saved it."""
+
+
 class Document(SheetOps, PageOps):
 
     def __init__(self, path: str | None = None, password: str | None = None):
+        # Stat before reading: a change between the two then shows as a change at save, never goes unnoticed.
+        self._disk = _disk_state(path)
         data = self._read(path) if path else None
         self.doc = fitz.open("pdf", data) if path else fitz.open()
         encrypted = bool(self.doc.needs_pass)
@@ -1443,23 +1449,50 @@ class Document(SheetOps, PageOps):
     def render(self, pno, zoom=1.0, clip=None) -> fitz.Pixmap:
         return self._page(pno).get_pixmap(matrix=fitz.Matrix(zoom, zoom), annots=True, clip=clip)
 
-    def save(self, path=None, **opts):
-        """Save (to `path`, or in place). A document opened with a password stays encrypted with it."""
-        self._store_scales()
+    def save(self, path=None, force=False, **opts):
+        """Save (to `path`, or in place). A document opened with a password stays encrypted with it.
+        An in-place save raises FileChangedError if another program changed the file since it was opened or last
+        saved; `force=True` overwrites it anyway. A file deleted meanwhile is simply written again."""
         path = path or self.path
         if path is None:
             raise ValueError("no path")
+        in_place = self.path is not None and same_file(path, self.path)
+        if in_place and not force:
+            now = _disk_state(path)
+            if now is not None and self._disk is not None and now != self._disk:
+                raise FileChangedError(f"The file was changed by another program since you opened it: {path}")
+        self._store_scales()
         kw = {"garbage": 3, "deflate": True, **opts}
         if "encryption" not in kw:
             kw.update(self._encryption_kwargs())
-        if path == self.path:
+        if in_place:
             # self.doc is memory-backed (see _open), so `path` can be replaced while it stays open.
             replace_file(path, lambda tmp: self.doc.save(tmp, **kw))
         else:
             self.doc.save(path, **kw)
             self.path = path
             self.save_as_required = False   # the new file is the user's own copy
+        self._disk = _disk_state(path)
         self.modified = False
+
+
+def same_file(a, b) -> bool:
+    """True if `a` and `b` name one file, however they are spelled (relative, `./`, case on Windows)."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:   # one of them does not exist: compare the spellings
+        return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+
+
+def _disk_state(path) -> tuple[int, int] | None:
+    """(modification time in ns, size) of the file at `path`, or None if there is no file there."""
+    if not path:
+        return None
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        return None
+    return st.st_mtime_ns, st.st_size
 
 
 def _today() -> str:
