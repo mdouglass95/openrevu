@@ -52,7 +52,7 @@ Optional programs (tests that need them say so):
 | `plan_v1.pdf` | 3 sheets: **A-101** and **A-102** (two rooms and a corridor, a 2 ft x 2 ft column, a dimension line) and **S-201** (text only) |
 | `plan_v2.pdf` | A later issue: S-201, A-101 (changed), A-103 (new). A-102 is gone. |
 | `protected.pdf` | A copy of plan_v1. The password is `test123`. |
-| `restricted.pdf` | A copy of plan_v1 that opens without a password but allows printing only (no markups, no changes) |
+| `restricted.pdf` | A copy of plan_v1 that opens without a password but allows printing only (no markups, no changes). Its owner password is `owner-restricted` |
 | `scanned.pdf` | A page that is only a picture of the text `INVOICE TOTAL 4500` |
 | `rotated.pdf` | A sheet with a 90 degree page rotation |
 | `many_pages.pdf` | 60 sheets, for speed |
@@ -347,6 +347,13 @@ label at the right of the status bar; point at it to read why. Switch to another
 Save as `restricted_copy.pdf`. The original `restricted.pdf` must be unchanged. Add another markup and press Ctrl+S: it saves
 `restricted_copy.pdf` without asking again. Open `restricted_copy.pdf` in a different PDF viewer and look at its security
 properties: it is still encrypted and still allows printing only.
+
+**T51b Owner password.** Open `restricted.pdf` and add a markup. Click the orange **This PDF restricts editing** label.
+Expect a password prompt titled "Owner password". Type `wrong` and press OK. Expect "That is not the owner password",
+and the label and the markup stay. Choose **File > Enter owner password…** and type `owner-restricted`. Expect the label
+to go away and **File > Enter owner password…** to turn grey; the markup is still there. Press Ctrl+S: it saves
+`restricted.pdf` in place, without a file dialog. Open `restricted.pdf` in a different PDF viewer: it shows the markup, is
+still encrypted, and still allows printing only.
 
 **T52 File changed by another program.** Copy `plan_v1.pdf` to `shared.pdf` and open `shared.pdf`. Add a markup. In a
 different PDF editor, change `shared.pdf` (add a comment or a page) and save it there. Back in OpenRevu, press Ctrl+S.

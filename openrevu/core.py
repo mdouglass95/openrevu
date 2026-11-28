@@ -792,6 +792,18 @@ class Document(SheetOps, PageOps):
         need = fitz.PDF_PERM_ANNOTATE | fitz.PDF_PERM_MODIFY
         return self._allowed & need != need
 
+    def unlock(self, owner_password: str) -> bool:
+        """Lift the restriction with the owner password, as if the file had been opened with it. Unsaved changes stay.
+        False, with the document as it was, if `owner_password` is not the owner password."""
+        if not self.doc.authenticate(owner_password) & 4:   # bit 4: the owner password
+            # A failed try leaves MuPDF with a wrong key, so nothing decrypts. The password it opened with restores it.
+            self.doc.authenticate(self._password or "")
+            return False
+        self._allowed = -1
+        self._owner_pw = owner_password
+        self.save_as_required = False
+        return True
+
     def _encryption_kwargs(self) -> dict:
         """Arguments that protect a file written from this document the way the opened file was protected: the same
         user password and permissions, and the owner password if the user gave it (else a random one).

@@ -114,11 +114,11 @@ def gui(app, tmp_path):
 
 
 def test_a_restricted_pdf_shows_a_notice(gui, tmp_path):
-    assert gui.lbl_restricted.isHidden()
+    assert gui.restricted_notice.isHidden()
     gui.open(make_pdf(tmp_path / "issued.pdf"))
-    assert not gui.lbl_restricted.isHidden() and "restricts editing" in gui.lbl_restricted.text()
+    assert not gui.restricted_notice.isHidden() and "restricts editing" in gui.restricted_notice.text()
     gui.tabs.setCurrentIndex(0)                               # back to the unrestricted file
-    assert gui.lbl_restricted.isHidden()
+    assert gui.restricted_notice.isHidden()
 
 
 def test_saving_a_restricted_pdf_asks_for_a_new_file_name(gui, tmp_path, monkeypatch):
@@ -164,3 +164,84 @@ def test_a_compare_overlay_keeps_the_password_when_only_the_other_input_is_restr
     out = str(tmp_path / "overlay.pdf")
     compare_documents(restricted, protected, out, new_password="secret")
     assert fitz.open(out).needs_pass and fitz.open(out).authenticate("secret")
+
+
+# ---------- entering the owner password after opening (issue #25) ----------
+@pytest.mark.parametrize("user_pw", ["", "user-pw"])
+def test_the_owner_password_lifts_the_restriction_and_keeps_unsaved_changes(tmp_path, user_pw):
+    src = make_pdf(tmp_path / "issued.pdf", user_pw=user_pw)
+    d = Document(src, user_pw or None)
+    d.add_rect(0, fitz.Rect(10, 10, 50, 50))
+    assert d.unlock("issuer-secret")
+    assert not d.restricted and not d.save_as_required
+    assert len(d.markups()) == 1
+    d.save()                                                  # in place, as when opened with the owner password
+    assert len(Document(src, user_pw or None).markups()) == 1
+    assert owner_rights(src, "issuer-secret")
+    assert user_permissions(src, user_pw) == user_permissions(make_pdf(tmp_path / "ref.pdf"))
+
+
+@pytest.mark.parametrize("wrong", ["not-it", "", "user-pw"])
+def test_a_wrong_owner_password_leaves_the_document_as_it_was(tmp_path, wrong):
+    src = make_pdf(tmp_path / "issued.pdf", user_pw="user-pw")
+    d = Document(src, "user-pw")
+    d.add_rect(0, fitz.Rect(10, 10, 50, 50))
+    assert not d.unlock(wrong)
+    assert d.restricted and d.save_as_required
+    assert "Issued for construction" in d.doc[0].get_text()  # the page content still decrypts
+    assert len(d.markups()) == 1
+    out = str(tmp_path / "copy.pdf")
+    d.save(out)
+    copy = Document(out, "user-pw")
+    assert len(copy.markups()) == 1 and "Issued for construction" in copy.doc[0].get_text() and copy.restricted
+
+
+def test_a_wrong_owner_password_keeps_an_owner_only_restricted_pdf_readable(tmp_path):
+    d = Document(make_pdf(tmp_path / "issued.pdf"))
+    d.add_rect(0, fitz.Rect(10, 10, 50, 50))
+    assert not d.unlock("not-it")
+    assert d.restricted and "Issued for construction" in d.doc[0].get_text()
+    d.undo()
+    assert d.markups() == [] and "Issued for construction" in d.doc[0].get_text()
+
+
+def _owner_password_action(gui):
+    return next(a for menu in gui.menuBar().actions() for a in menu.menu().actions()
+                if a.text() == "Enter owner password…")
+
+
+def test_clicking_the_restriction_notice_asks_for_the_owner_password_and_save_then_writes_in_place(gui, tmp_path,
+                                                                                                    monkeypatch):
+    from PyQt5 import QtCore, QtWidgets as W
+    from PyQt5.QtTest import QTest
+    src = make_pdf(tmp_path / "issued.pdf")
+    gui.open(src)
+    gui.doc.add_rect(0, fitz.Rect(10, 10, 50, 50))
+    assert _owner_password_action(gui).isEnabled()
+    asked = []
+    monkeypatch.setattr(W.QInputDialog, "getText", staticmethod(lambda *a, **k: (asked.append(a[2]) or "issuer-secret", True)))
+    QTest.mouseClick(gui.restricted_notice, QtCore.Qt.LeftButton)
+    assert asked and "owner password" in asked[0].lower()
+    assert gui.restricted_notice.isHidden() and not _owner_password_action(gui).isEnabled()
+    gui.save()                                                # no file dialog: conftest fails the test if one opens
+    assert len(Document(src, "issuer-secret").markups()) == 1 and owner_rights(src, "issuer-secret")
+
+
+def test_a_wrong_owner_password_from_the_menu_says_so_and_keeps_the_notice(gui, tmp_path, monkeypatch):
+    from PyQt5 import QtWidgets as W
+    gui.open(make_pdf(tmp_path / "issued.pdf"))
+    gui.doc.add_rect(0, fitz.Rect(10, 10, 50, 50))
+    monkeypatch.setattr(W.QInputDialog, "getText", staticmethod(lambda *a, **k: ("not-it", True)))
+    warned = []
+    monkeypatch.setattr(W.QMessageBox, "warning", staticmethod(lambda *a, **k: warned.append(a[2])))
+    _owner_password_action(gui).trigger()
+    assert warned and "not the owner password" in warned[0]
+    assert not gui.restricted_notice.isHidden() and gui.doc.restricted and len(gui.doc.markups()) == 1
+
+
+def test_the_owner_password_item_is_off_without_a_restricted_pdf(app, gui):
+    from openrevu.gui import Main
+    empty = Main(); empty.show(); app.processEvents()
+    assert not _owner_password_action(empty).isEnabled()      # the start page: no document at all
+    assert not _owner_password_action(gui).isEnabled()        # an unrestricted PDF
+    empty.close()
