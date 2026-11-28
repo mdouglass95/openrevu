@@ -185,3 +185,28 @@ def test_scrolling_with_the_wheel_during_a_wheel_zoom_settles_it_first(app, tmp_
         QtCore.Qt.NoButton, QtCore.Qt.NoModifier, QtCore.Qt.NoScrollPhase, False))
     assert cv.zoom == pytest.approx(2.0 * 1.15) and cv.transform().isIdentity()
     assert pixmap_bytes(cv) > 0
+
+
+def test_refind_walks_only_the_markups_page(app, tmp_path, monkeypatch):
+    """Issue #10: after an edit the canvas found its selection again by building every markup of every page."""
+    import openrevu.core as core
+    cv = make_canvas(tmp_path, pages=((612, 792), (612, 792)))
+    cv.doc.add_rect(0, fitz.Rect(100, 100, 200, 200))
+    for i in range(20):
+        cv.doc.add_rect(1, fitz.Rect(10 + i, 10, 60 + i, 60))
+    target = cv.doc.markups()[0]
+    built = []
+    real = core.Markup.__init__
+    monkeypatch.setattr(core.Markup, "__init__", lambda self, a, pno, *r, **k: built.append(pno) or real(self, a, pno, *r, **k))
+    found = cv._refind(target)
+    assert found is not None and found.xref == target.xref and found.page_no == 0
+    assert built == [0]
+
+
+def test_selection_on_a_deleted_page_is_dropped_on_reload(app, tmp_path):
+    cv = make_canvas(tmp_path, pages=((612, 792), (612, 792)))
+    cv.doc.add_rect(1, fitz.Rect(100, 100, 200, 200))
+    cv.select(cv.doc.markups()[0])
+    cv.doc.delete_pages([1])
+    cv.reload()
+    assert cv.selected is None
