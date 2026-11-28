@@ -180,6 +180,21 @@ def test_slip_sheet_replaces_by_number_and_keeps_everything(tmp_path):
     assert [l["page"] for l in r.links(1)] == [0]
 
 
+def test_slip_sheet_added_sheet_keeps_its_scale(tmp_path):
+    new = Document(make_set(tmp_path / "new.pdf", V2))
+    new.set_scale(Scale.from_ratio(1, 50, "ft"), page=2)       # A-103 is only in the new set
+    new.save(str(tmp_path / "calibrated.pdf"))
+    d = Document(make_set(tmp_path / "old.pdf", SET_V1))
+    d.set_scale(Scale.from_ratio(1, 10, "ft"), page=0)
+    assert d.slip_sheet(str(tmp_path / "calibrated.pdf")).added == ["A-103"]
+    out = str(tmp_path / "out.pdf")
+    d.save(out)
+    for doc in (d, Document(out)):
+        assert doc.sheet_info(3)["number"] == "A-103"
+        assert doc.scale_for(3).unit_per_pt == pytest.approx(50 / 72)
+        assert doc.scale_for(0).unit_per_pt == pytest.approx(10 / 72)
+
+
 def test_slip_sheet_undo_restores_the_old_set(tmp_path):
     d = Document(annotated_old(tmp_path))
     d.slip_sheet(make_set(tmp_path / "new.pdf", V2), revision="B")

@@ -104,6 +104,27 @@ def test_revu_markups_appear_in_takeoff(revu):
     assert t[("Area Measurement", "area", "ft")][1] == pytest.approx(471.48, rel=1e-3)
 
 
+def test_inserted_revu_page_keeps_its_scales(tmp_path):
+    d = Document()
+    d.insert_blank()
+    d.insert_blank()
+    d.set_scale(Scale.from_ratio(1, 10, "ft"), page=0)
+    d.add_viewport(1, (100, 100, 200, 200), Scale.from_ratio(1, 20, "ft"))
+    assert d.insert_pdf(str(SAMPLE), at=1) == 1
+    out = tmp_path / "inserted.pdf"
+    d.save(str(out))
+    for doc in (d, Document(str(out))):
+        assert doc.scale_for(1).unit == "ft"
+        assert doc.scale_for(1).unit_per_pt == pytest.approx(EIGHTH_INCH, rel=1e-3)
+        on_revu_page = [sc for p, _, sc in doc.viewports if p == 1]
+        assert len(on_revu_page) == 2
+        assert all(sc.unit_per_pt == pytest.approx(QUARTER_INCH, rel=1e-3) for sc in on_revu_page)
+        # the pages that were there keep theirs: page 0 in place, the old page 1 now page 2
+        assert doc.scale_for(0).unit_per_pt == pytest.approx(10 / 72)
+        [(r, sc)] = [(r, sc) for p, r, sc in doc.viewports if p == 2]
+        assert tuple(r) == pytest.approx((100, 100, 200, 200)) and sc.unit_per_pt == pytest.approx(20 / 72)
+
+
 def test_broken_revu_structures_are_ignored(tmp_path):
     import pymupdf as fitz
     d = fitz.open(SAMPLE)
