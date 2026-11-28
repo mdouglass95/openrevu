@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 
 import pymupdf as fitz  # PyMuPDF
 
+from . import pdfmeasure
 from ._util import mutates
 
 KEY = "OR_Sheet"
@@ -302,6 +303,7 @@ class SheetOps:
         for j, num in added:
             at = len(self.doc)
             self.doc.insert_pdf(new.doc, from_page=j, to_page=j, start_at=at)
+            self._take_viewports(at, pdfmeasure.page_viewports(new.doc, j), self.page_scales, self.default_scale)
             info = new.sheet_info(j)
             rec = read_record(new.doc, j)
             rec.setdefault("number", info["number"])

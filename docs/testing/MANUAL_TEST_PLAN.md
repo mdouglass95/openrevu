@@ -225,7 +225,9 @@ right: it must use 1 in = 4 ft. Compare the Markups List and the **Measurements*
 Length Measurements (60', 30', 4', 1'-8"), the two Polylength Measurements (108'-3 1/2", 36'-1"), the Area Measurement (471.48 sq ft)
 and one Count Measurement of 7 must match. Change the page scale, save, close and open the file again: your scale must stay.
 Resize the 60' length a little: its value must stay near 60', because it keeps its own Revu scale. Then calibrate the
-saved file again in Revu at a new scale and open it in OpenRevu: expect the new Revu scale.
+saved file again in Revu at a new scale and open it in OpenRevu: expect the new Revu scale. Last, open `plan_v1.pdf` and insert
+`RevuTest.pdf` before page 1 (**Document > Insert pages from PDF…**). Expect the status bar on the new page 1 to show
+`Scale: 1 in = 8 ft (viewports on page)`, and the same after you save, close and open the file again.
 
 **T28b OpenRevu scales and measurements in Revu.** Needs Bluebeam Revu. Open a blank sheet in OpenRevu. Set the default scale to
 1/8" = 1'-0" and give page 2 (if any) its own scale of 1/4" = 1'-0". Add a viewport at 1" = 10'. Draw a length, a polylength and an
