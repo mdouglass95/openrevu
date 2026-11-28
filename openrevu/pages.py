@@ -1,6 +1,7 @@
 """Page- and document-level operations mixed into Document."""
 from __future__ import annotations
 
+import contextlib
 import datetime
 import os
 import secrets
@@ -24,12 +25,29 @@ class PageOps:
             if not 0 <= p < len(self.doc):
                 raise IndexError(f"page {p} out of range")
 
+    @contextlib.contextmanager
+    def _keeping_page_labels(self):
+        """MuPDF (1.28) moves the page label ranges when pages are inserted or deleted, and gets two cases wrong.
+        Inserting before page 1 gives a file without page labels the labels 1, 1, 2, ... And deleting the page that
+        starts a range leaves two ranges that start on the same page, on which PyMuPDF's get_label raises TypeError.
+        Of those two ranges, the later one is right."""
+        had_labels = bool(self.doc.get_page_labels())
+        yield
+        rules = self.doc.get_page_labels()
+        if not had_labels and rules:
+            self.doc.xref_set_key(self.doc.pdf_catalog(), "PageLabels", "null")
+        elif had_labels:
+            one_per_page = list({r["startpage"]: r for r in rules}.values())
+            if len(one_per_page) < len(rules):
+                self.doc.set_page_labels(one_per_page)
+
     # ---- page management ----
     @mutates
     def insert_blank(self, at=None, width=612, height=792):
         at = len(self.doc) if at is None else at
         n = len(self.doc)
-        self.doc.new_page(pno=at, width=width, height=height)
+        with self._keeping_page_labels():
+            self.doc.new_page(pno=at, width=width, height=height)
         self._remap_scales({i: i + (i >= at) for i in range(n)})
 
     @mutates
@@ -39,7 +57,8 @@ class PageOps:
         if len(pnos) >= len(self.doc):
             raise ValueError("cannot delete every page")
         n = len(self.doc)
-        self.doc.delete_pages(pnos)
+        with self._keeping_page_labels():
+            self.doc.delete_pages(pnos)
         keep = [i for i in range(n) if i not in pnos]
         self._remap_scales({old: new for new, old in enumerate(keep)})
 
@@ -92,14 +111,15 @@ class PageOps:
         n, k = len(self.doc), (len(pages) if pages is not None else len(src))
         kw = {"start_at": at}
         from .sheets import copy_records
-        if pages is not None:
-            for p in pages:
-                self.doc.insert_pdf(src, from_page=p, to_page=p, start_at=at)
-                copy_records(src, [p], self.doc, at)
-                at += 1
-        else:
-            self.doc.insert_pdf(src, **kw)
-            copy_records(src, range(len(src)), self.doc, kw["start_at"])
+        with self._keeping_page_labels():
+            if pages is not None:
+                for p in pages:
+                    self.doc.insert_pdf(src, from_page=p, to_page=p, start_at=at)
+                    copy_records(src, [p], self.doc, at)
+                    at += 1
+            else:
+                self.doc.insert_pdf(src, **kw)
+                copy_records(src, range(len(src)), self.doc, kw["start_at"])
         src.close()
         self._remap_scales({i: i + (k if i >= kw["start_at"] else 0) for i in range(n)})
         return k
@@ -111,7 +131,8 @@ class PageOps:
         pdfbytes = img.convert_to_pdf()
         src = fitz.open("pdf", pdfbytes)
         n = len(self.doc)
-        self.doc.insert_pdf(src, start_at=at)
+        with self._keeping_page_labels():
+            self.doc.insert_pdf(src, start_at=at)
         self._remap_scales({i: i + (i >= at) for i in range(n)})
 
     def extract_pages(self, pnos, out_path):

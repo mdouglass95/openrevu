@@ -490,6 +490,43 @@ def test_navigation_bookmarks_links_labels(pdf):
         d.add_bookmark("x", 99)
 
 
+def labels(d):
+    return [d.page_label(i) for i in range(d.page_count)]
+
+
+def test_page_edits_give_a_file_without_page_labels_none(pdf, tmp_path):
+    d = Document(pdf)
+    d.insert_blank(0)
+    d.insert_pdf(pdf, at=0, pages=[1])
+    assert labels(d) == [""] * 5
+    d.delete_pages([0])
+    d.delete_pages([0])
+    assert labels(d) == [""] * 3
+    while d.undo():
+        assert labels(d) == [""] * d.page_count
+    while d.redo():
+        assert labels(d) == [""] * d.page_count
+    d.save(str(tmp_path / "out.pdf"))
+    assert fitz.open(tmp_path / "out.pdf").get_page_labels() == []
+
+
+def test_page_edits_keep_the_other_pages_labels(tmp_path):
+    d = Document(make_pdf(tmp_path / "l.pdf", pages=5))
+    d.set_page_labels([{"startpage": 0, "style": "r"}, {"startpage": 2, "prefix": "A-", "style": "D"},
+                       {"startpage": 3, "prefix": "B-", "style": "D"}])
+    assert labels(d) == ["i", "ii", "A-1", "B-1", "B-2"]
+    d.delete_pages([2])
+    assert labels(d) == ["i", "ii", "B-1", "B-2"]
+    d.insert_blank(0)
+    assert labels(d)[1:] == ["i", "ii", "B-1", "B-2"]
+    d.delete_pages([0])
+    assert labels(d) == ["i", "ii", "B-1", "B-2"]
+    d.undo(); d.undo(); d.undo()
+    assert labels(d) == ["i", "ii", "A-1", "B-1", "B-2"]
+    d.redo(); d.redo(); d.redo()
+    assert labels(d) == ["i", "ii", "B-1", "B-2"]
+
+
 def test_search_and_text(pdf):
     d = Document(pdf)
     hits = d.search("SECRET")
