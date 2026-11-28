@@ -8,6 +8,7 @@ import shutil
 
 import pymupdf as fitz  # PyMuPDF
 
+from . import pdfmeasure
 from ._util import mutates
 
 
@@ -91,6 +92,7 @@ class PageOps:
         at = len(self.doc) if at is None else at
         n, k = len(self.doc), (len(pages) if pages is not None else len(src))
         kw = {"start_at": at}
+        vps = [pdfmeasure.page_viewports(src, p) for p in (pages if pages is not None else range(len(src)))]
         from .sheets import copy_records
         if pages is not None:
             for p in pages:
@@ -102,6 +104,8 @@ class PageOps:
             copy_records(src, range(len(src)), self.doc, kw["start_at"])
         src.close()
         self._remap_scales({i: i + (k if i >= kw["start_at"] else 0) for i in range(n)})
+        for i, v in enumerate(vps):       # PyMuPDF does not copy /VP: the page scales and viewports come from here
+            self._take_viewports(kw["start_at"] + i, v, self.page_scales, self.default_scale)
         return k
 
     @mutates

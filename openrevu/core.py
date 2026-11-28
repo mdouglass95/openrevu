@@ -842,13 +842,18 @@ class Document(SheetOps, PageOps):
                 continue
             if legacy:
                 self._import_legacy_viewports(pno, vps, pages, seen)
-                continue
-            page_scale, marked, rects = self._pdf_viewports(pno, vps)
-            if page_scale and not (marked and _same_scale(page_scale, default)):
-                pages[pno] = page_scale
-            self.viewports += [(pno, r, sc) for r, sc in rects]
+            else:
+                self._take_viewports(pno, vps, pages, default)
         self._vp_state = None   # the scales at the last _sync_viewports
         return default, pages
+
+    def _take_viewports(self, pno: int, vps, pages: dict, default: Scale):
+        """Add the /VP viewports `vps` of page `pno` to the page scales `pages` and to self.viewports. A page scale
+        marked as the default scale stays out of `pages` when it is `default`."""
+        page_scale, marked, rects = self._pdf_viewports(pno, vps)
+        if page_scale and not (marked and _same_scale(page_scale, default)):
+            pages[pno] = page_scale
+        self.viewports += [(pno, r, sc) for r, sc in rects]
 
     def _import_legacy_viewports(self, pno: int, vps, pages: dict, seen):
         """Merge the /VP viewports of one page into settings saved before OpenRevu wrote /VP itself. Those settings keep
