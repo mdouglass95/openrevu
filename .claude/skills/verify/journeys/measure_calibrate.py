@@ -9,6 +9,8 @@ room 1 is inside (100,200)-(460,470) with a 2 ft column; its net area is about 2
 import csv
 import re
 
+from PyQt5.QtWidgets import QTableWidget
+
 
 def journey(s):
     pdf = s.samples() / "plan_v1.pdf"
@@ -41,7 +43,13 @@ def journey(s):
     s.shot("measured")
 
     # Measurement summary dialog
-    s.modal(lambda: s.menu("Measure > Measurement summary…"), lambda dlg: s.shot("summary-dialog", dlg))
+    units = {}
+
+    def read_summary(dlg):
+        s.shot("summary-dialog", dlg)
+        units.update({r[0]: r[4] for r in s.table(dlg.findChild(QTableWidget))})
+    s.modal(lambda: s.menu("Measure > Measurement summary…"), read_summary)
+    s.check(units == {"Fill Area": "ft²", "Length": "ft"}, f"summary dialog units match the Markups List: {units}")
 
     # export the summary CSV
     out = s.work / "summary.csv"
@@ -52,5 +60,5 @@ def journey(s):
     text = out.read_text(encoding="utf-8")
     s.step("summary.csv:\n" + text)
     with open(out, newline="", encoding="utf-8") as f:
-        data = list(csv.reader(f))
-    s.check(any("ft" in " ".join(r) for r in data[1:]), "the CSV lists the measurements in feet")
+        units = {r["subject"]: r["unit"] for r in csv.DictReader(f)}
+    s.check(units == {"Fill Area": "ft²", "Length": "ft"}, f"summary CSV units match the Markups List: {units}")

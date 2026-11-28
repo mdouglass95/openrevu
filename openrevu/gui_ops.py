@@ -4,7 +4,7 @@ from __future__ import annotations
 import pymupdf as fitz  # PyMuPDF
 from PyQt5 import QtCore, QtWidgets as W
 
-from .core import Scale
+from .core import Scale, unit_label
 from .pages import compare_pdfs
 
 ERRORS = (ValueError, IndexError, RuntimeError, PermissionError, OSError, KeyError)
@@ -433,7 +433,7 @@ class DocumentOps:
         t = W.QTableWidget(len(rows), 5)
         t.setHorizontalHeaderLabels(["Subject", "Measure", "Items", "Total", "Unit"])
         for i, ((s, k, u), (n, tot)) in enumerate(rows):
-            for c, v in enumerate((s, k, str(n), f"{tot:.3f}", u)):
+            for c, v in enumerate((s, k, str(n), f"{tot:.3f}", unit_label(k, u))):
                 t.setItem(i, c, W.QTableWidgetItem(v))
         lay.addWidget(t)
         b = W.QPushButton("Export CSV…")
