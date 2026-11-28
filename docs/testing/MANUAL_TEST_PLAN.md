@@ -210,6 +210,7 @@ open area. Click outside every room: expect "region is not enclosed".
 
 **T26 Viewport scale.** Choose **Viewport** and drag a box around room 2. The program asks for the scale as
 `paper inches : real length : unit`. Type `0.5:1:ft`. Then measure a length inside and outside the box: they must use different scales.
+Rotate the page 90 degrees, then crop it so room 2 stays visible. A new length in room 2 must still use the box's scale.
 
 **T27 Feet and inches.** With a length on the page, open **Measure > Show feet and inches**. Expect the label to read like `20'` or `19' 11 1/2"`
 (the exact value depends on where you clicked; it must not be a decimal). The Markups List follows. Switch it off: decimals again. Ctrl+Z toggles it back.

@@ -621,7 +621,7 @@ class Document(SheetOps, PageOps):
         self._pcache: dict[int, fitz.Page] = {}
         self.revision = 0            # counts changes, so caches know when to rebuild
         self._link_doc, self._link_rev = None, -1
-        self.viewports: list = []
+        self._viewports: list = []   # [(page, rect in PDF user space, scale)], as the pages' /VP hold them
         self.unit_style, self.fraction = "decimal", 16
         self.columns: list = []   # custom Markups List columns: {"name", "type", "choices"}
         self._joined: set[int] = set()   # journal steps that undo together with the step before them
@@ -834,7 +834,8 @@ class Document(SheetOps, PageOps):
         default = st.get("default", Scale())
         self.unit_style, self.fraction, self.columns = st.get("style", "decimal"), st.get("fraction", 16), st.get("columns", [])
         legacy = st.get("legacy")
-        pages, self.viewports, seen = legacy if legacy else ({}, [], None)
+        pages, visual, seen = legacy if legacy else ({}, [], None)
+        self._viewports = [(p, self._pdf_rect(p, r), sc) for p, r, sc in visual if 0 <= p < len(self.doc)]
         self._vp_file = {}   # page xref -> the /VP viewports in the file, as pdfmeasure.page_viewports returns them
         for pno in range(len(self.doc)):
             vps = self._vp_file[self.doc.page_xref(pno)] = pdfmeasure.page_viewports(self.doc, pno)
@@ -846,7 +847,7 @@ class Document(SheetOps, PageOps):
             page_scale, marked, rects = self._pdf_viewports(pno, vps)
             if page_scale and not (marked and _same_scale(page_scale, default)):
                 pages[pno] = page_scale
-            self.viewports += [(pno, r, sc) for r, sc in rects]
+            self._viewports += [(pno, r, sc) for r, sc in rects]
         self._vp_state = None   # the scales at the last _sync_viewports
         return default, pages
 
@@ -862,15 +863,15 @@ class Document(SheetOps, PageOps):
         if page_scale and (newer or pno not in pages):
             pages[pno] = page_scale
         for r, sc in rects:
-            i = next((i for i, (p, r2, _) in enumerate(self.viewports) if p == pno and _same_rect(r, r2)), None)
+            i = next((i for i, (p, r2, _) in enumerate(self._viewports) if p == pno and _same_rect(r, r2)), None)
             if i is None:
-                self.viewports.append((pno, r, sc))
+                self._viewports.append((pno, r, sc))
             elif newer:
-                self.viewports[i] = (pno, r, sc)
+                self._viewports[i] = (pno, r, sc)
 
     def _pdf_viewports(self, pno: int, vps):
-        """(page scale or None, whether it is marked as the default scale, [(visual rect, scale)]) of the /VP
-        viewports `vps` of one page."""
+        """(page scale or None, whether it is marked as the default scale, [(rect in PDF user space, scale)]) of the
+        /VP viewports `vps` of one page."""
         page_scale, marked, rects = None, False, []
         page = self._page(pno)
         for bbox, m, default in vps:
@@ -883,7 +884,7 @@ class Document(SheetOps, PageOps):
                 if page_scale is None:
                     page_scale, marked = sc, default
             else:
-                rects.append((r, sc))
+                rects.append((bbox, sc))
         return page_scale, marked, rects
 
     # PDF user space (y up) <-> PyMuPDF unrotated space (y down, CropBox origin) <-> visual space
@@ -903,18 +904,18 @@ class Document(SheetOps, PageOps):
 
     def _wanted_viewports(self, pno: int, rects):
         """(page viewport or None, detail viewports) that the /VP of page `pno` should hold, each viewport as
-        pdfmeasure.page_viewports returns it. `rects` are the [(visual rect, scale)] viewports on the page. The page
-        scale is a viewport the size of the visual page at the origin, as Revu writes it. A page on the default scale
-        gets one too, marked as the default, unless the default was never calibrated."""
+        pdfmeasure.page_viewports returns it. `rects` are the [(rect in PDF user space, scale)] viewports on the page.
+        The page scale is a viewport the size of the visual page at the origin, as Revu writes it. A page on the
+        default scale gets one too, marked as the default, unless the default was never calibrated."""
         sc, default = self.page_scales.get(pno), False
         if sc is None and self.default_scale != Scale():
             sc, default = self.default_scale, True
         page = (fitz.Rect(self._page(pno).rect), (sc.unit, sc.unit_per_pt), default) if sc else None
-        return page, [(self._pdf_rect(pno, r), (vs.unit, vs.unit_per_pt), False) for r, vs in rects]
+        return page, [(r, (vs.unit, vs.unit_per_pt), False) for r, vs in rects]
 
     def _rects_by_page(self) -> dict:
         out: dict = {}
-        for p, r, sc in self.viewports:
+        for p, r, sc in self._viewports:
             out.setdefault(p, []).append((r, sc))
         return out
 
@@ -927,7 +928,7 @@ class Document(SheetOps, PageOps):
         is left as it is, so the /VP that Revu wrote stays untouched until the user changes a scale on that page.
         Skipped while the scales and the number of pages are as they were at the last sync; anything else that changes
         what a page's /VP should say (page geometry, replacing pages, undo) clears _vp_state."""
-        state = repr((self.default_scale, sorted(self.page_scales.items()), self.viewports, len(self.doc)))
+        state = repr((self.default_scale, sorted(self.page_scales.items()), self._viewports, len(self.doc)))
         if state == self._vp_state:
             return
         rects = self._rects_by_page()
@@ -1042,8 +1043,8 @@ class Document(SheetOps, PageOps):
         """Scale that applies at the centroid of pts: the innermost-last viewport containing it, else the page scale."""
         pts = list(pts)
         c = fitz.Point(sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))
-        for p, r, sc in reversed(self.viewports):
-            if p == pno and r.contains(c):
+        for p, r, sc in reversed(self._viewports):
+            if p == pno and self._visual_rect(p, r).contains(c):
                 return sc
         return self.scale_for(pno)
 
@@ -1054,11 +1055,17 @@ class Document(SheetOps, PageOps):
         if r.is_empty:
             raise ValueError("viewport must have an area")
         with self._operation("add viewport"):
-            self.viewports.append((pno, r, scale))
+            self._viewports.append((pno, self._pdf_rect(pno, r), scale))
 
     def remove_viewport(self, index: int):
         with self._operation("remove viewport"):
-            del self.viewports[index]
+            del self._viewports[index]
+
+    @property
+    def viewports(self) -> list:
+        """[(page, visual rect, scale)] of the viewports. They are kept in PDF user space, as in the page's /VP, so
+        rotating or cropping a page leaves each on the part of the drawing it was set on."""
+        return [(p, self._visual_rect(p, r), sc) for p, r, sc in self._viewports]
 
     def set_scale(self, scale: Scale, page: int | None = None, pages=None, reset_pages: bool = False):
         """Set the default scale, or the scale of one page / a list of pages.

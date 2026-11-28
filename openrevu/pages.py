@@ -16,7 +16,7 @@ class PageOps:
     def _remap_scales(self, mapping: dict):
         """mapping: old page index -> new index (missing = page removed)."""
         self.page_scales = {mapping[k]: v for k, v in self.page_scales.items() if k in mapping}
-        self.viewports = [(mapping[p], r, sc) for p, r, sc in self.viewports if p in mapping]
+        self._viewports = [(mapping[p], r, sc) for p, r, sc in self._viewports if p in mapping]
         self._invalidate_pages()
 
     def _check(self, pnos):

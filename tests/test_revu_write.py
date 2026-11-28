@@ -235,6 +235,53 @@ def test_cropping_a_page_rewrites_its_page_viewport_to_the_cropped_size(tmp_path
     assert list(vp[0]) == pytest.approx([0, 0, 300, 400], abs=0.01)
 
 
+# A viewport at visual (100, 100, 300, 300) on an upright 612 x 792 pt page has this /BBox in PDF user space (y up).
+DETAIL_BBOX = [100, 492, 300, 692]
+DETAIL = Scale.from_ratio(1, 10, "ft")
+
+
+def _visual_viewports(doc):
+    return [(p, pytest.approx(list(r), abs=0.01)) for p, r, _ in doc.viewports]
+
+
+def test_rotating_a_page_keeps_its_viewport_on_the_same_part_of_the_drawing(tmp_path):
+    doc = Document(str(_two_pages(tmp_path)))
+    doc.add_viewport(0, (100, 100, 300, 300), DETAIL)
+    doc.rotate_pages([0], 90)
+    # turned 90 degrees clockwise, the drawing under visual (100, 100, 300, 300) is now at x 792-300..792-100
+    assert _visual_viewports(doc) == [(0, [492, 100, 692, 300])]
+    assert doc.scale_at(0, [(592, 200)]).unit_per_pt == pytest.approx(DETAIL.unit_per_pt)
+    assert doc.scale_at(0, [(200, 200)]) == doc.scale_for(0)      # where the viewport was before the turn
+    out = _saved(doc, tmp_path)
+    assert [list(b) for b, _, _ in _viewports(out)] == [pytest.approx(DETAIL_BBOX, abs=0.01)]   # Revu sees no move
+    assert _visual_viewports(Document(str(out))) == [(0, [492, 100, 692, 300])]
+    doc.undo()
+    assert _visual_viewports(doc) == [(0, [100, 100, 300, 300])]
+
+
+def test_cropping_a_page_keeps_its_viewports_on_the_same_part_of_the_drawing(tmp_path):
+    doc = Document(str(_two_pages(tmp_path)))
+    doc.add_viewport(0, (100, 100, 300, 300), DETAIL)
+    doc.crop_page(0, (50, 50, 500, 700))
+    assert _visual_viewports(doc) == [(0, [50, 50, 250, 250])]
+    assert doc.scale_at(0, [(60, 60)]).unit_per_pt == pytest.approx(DETAIL.unit_per_pt)
+    assert [list(b) for b, _, _ in _viewports(_saved(doc, tmp_path))] == [pytest.approx(DETAIL_BBOX, abs=0.01)]
+
+
+def test_a_crop_that_cuts_a_viewport_off_the_page_keeps_the_whole_viewport(tmp_path):
+    doc = Document(str(_two_pages(tmp_path)))
+    doc.add_viewport(0, (100, 100, 300, 300), DETAIL)
+    doc.crop_page(0, (200, 200, 612, 792))                        # cuts the viewport in part: it is not clipped
+    assert _visual_viewports(doc) == [(0, [-100, -100, 100, 100])]
+    assert doc.scale_at(0, [(50, 50)]).unit_per_pt == pytest.approx(DETAIL.unit_per_pt)
+    doc.crop_page(0, (300, 300, 412, 592))                        # the viewport is now wholly off the page
+    assert _visual_viewports(doc) == [(0, [-400, -400, -200, -200])]
+    out = _saved(doc, tmp_path)
+    assert [list(b) for b, _, _ in _viewports(out)] == [pytest.approx(DETAIL_BBOX, abs=0.01)]
+    doc.undo(); doc.undo()                                        # undoing the crops shows it where it was set
+    assert _visual_viewports(doc) == [(0, [100, 100, 300, 300])]
+
+
 def test_a_slip_sheeted_page_keeps_its_page_scale(tmp_path):
     doc = Document(str(_two_pages(tmp_path)))
     doc.set_scale(Scale.from_ratio(0.25, 1, "ft"), page=0)
