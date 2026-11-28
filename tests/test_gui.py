@@ -8,6 +8,7 @@ import pytest
 pytest.importorskip("PyQt5")
 from PyQt5 import QtCore, QtGui, QtTest, QtWidgets
 
+from openrevu import pdfa
 from openrevu.core import Document
 from openrevu.gui import Main, parse_pages
 
@@ -873,6 +874,23 @@ def test_a_copy_command_saves_over_the_signed_original_when_told_to(signed_win, 
     seen = answer_with(monkeypatch, "Save anyway")
     _copy_commands(w, monkeypatch)["optimize"]()
     assert seen["asked"] == 1 and Path(signed_pdf).read_bytes() != original
+
+
+@pytest.mark.parametrize("command", ["save_encrypted", "optimize", pytest.param(
+    "export_pdfa", marks=pytest.mark.skipif(not pdfa.available(), reason="Ghostscript not installed"))])
+def test_save_after_a_copy_replaced_the_signed_original_does_not_ask_about_signatures(signed_win, signed_pdf, monkeypatch,
+                                                                                      command):
+    """Issue #82: the copy is a full rewrite, so the file has no intact signatures left. Save still names the copy (#58)."""
+    w = signed_win
+    run = {**_copy_commands(w, monkeypatch), "export_pdfa": w.export_pdfa}[command]
+    for name in ("information", "warning"):             # the PDF/A report shown after the export
+        monkeypatch.setattr(QtWidgets.QMessageBox, name, staticmethod(lambda *a, **k: None))
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (signed_pdf, "")))
+    answer_with(monkeypatch, "Save anyway")
+    run()
+    seen = answer_with(monkeypatch, "Cancel")
+    w.save()
+    assert seen["asked"] == 1 and seen["text"].startswith("You replaced this file with")
 
 
 def test_a_copy_command_to_another_file_does_not_ask(signed_win, monkeypatch, tmp_path):
