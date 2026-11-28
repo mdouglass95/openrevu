@@ -356,6 +356,10 @@ opens; the copy gets your markup, and `shared.pdf` keeps the other editor's chan
 change the file in the other editor once more, press Ctrl+S and choose **Overwrite**: the file now has your markup and not
 the other editor's change. Add another markup and press Ctrl+S: it saves without asking. Close the tab with unsaved changes
 after another outside change, choose **Save**, then **Cancel** in the warning: the tab stays open.
+Recovered work: as in T48, open `shared.pdf`, add a markup, wait for an autosave and kill the program. Change
+`shared.pdf` in the other editor. Start OpenRevu, choose **Recover**, press Ctrl+S and accept `shared.pdf` in the file
+dialog: expect the same warning after the dialog's "Replace?" question. If `shared.pdf` was deleted instead, it is
+written without the warning.
 
 ### H. Visual and feel (look at the whole window)
 

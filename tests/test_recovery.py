@@ -440,14 +440,19 @@ def test_saving_recovered_work_over_an_original_deleted_since_the_crash_writes_i
     assert seen["asked"] == 0 and len(Document(pdf).markups()) == 1
 
 
-def test_a_snapshot_from_an_older_version_still_recovers_and_saves(app, pdf, isolated_recovery_dir, monkeypatch):
+@pytest.mark.parametrize("disk", [None, "garbage", 7, [1]], ids=["older version", "text", "number", "short list"])
+def test_a_snapshot_without_a_readable_original_state_still_recovers_and_saves(
+        app, pdf, isolated_recovery_dir, monkeypatch, disk):
     # Older versions did not record the original's state, so a change to it cannot be detected.
     w = Main(pdf); w.doc.add_rect(0, fitz.Rect(10, 10, 60, 60)); w._after_change(); autosave(w); crash(w)
     as_dead_session(isolated_recovery_dir)
     for name in os.listdir(isolated_recovery_dir):
         if name.endswith(".json"):
             p = os.path.join(isolated_recovery_dir, name)
-            m = json.load(open(p)); m.pop("disk", None); json.dump(m, open(p, "w"))
+            m = json.load(open(p)); m.pop("disk", None)
+            if disk is not None:
+                m["disk"] = disk
+            json.dump(m, open(p, "w"))
     colleague_edits(pdf)
     w2 = Main(); choose(monkeypatch, "Recover")
     assert w2.offer_recovery() == 1

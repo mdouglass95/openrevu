@@ -253,7 +253,8 @@ class Main(DocumentOps, W.QMainWindow):
                 self._autosave_more = True
                 break
             try:
-                fut = recovery.write_later(rid, d._snapshot(), d.path, self.tabs.tabText(i).lstrip("*"), bool(d._password))
+                fut = recovery.write_later(rid, d._snapshot(), d.path, self.tabs.tabText(i).lstrip("*"), bool(d._password),
+                                           d._disk)
             except Exception as e:   # autosave runs every minute: no failure may open a dialog each time
                 self._autosave_failed(e)
                 continue
@@ -327,9 +328,8 @@ class Main(DocumentOps, W.QMainWindow):
                     break
             if d is None:
                 continue
-            d.path = None                  # saving asks for a file name: never overwrite the snapshot or the original silently
-            d.suggested_path = m.get("path")
-            d.modified = True
+            # saving asks for a file name: never overwrite the snapshot or the original silently
+            d.recovered_from(m.get("path"), m["disk"])
             self._attach(d, f"{m['title']} (recovered)")
             self.tabs.setTabText(self.tabs.currentIndex(), self._title())
             d.recovery_id = m["id"]              # keep the snapshot until the user saves or closes: a second crash must not lose it
@@ -1082,26 +1082,27 @@ class Main(DocumentOps, W.QMainWindow):
             if choice == "cancel":
                 return False
             in_place = choice == "anyway"
+        title = "Save a copy (this PDF restricts editing)" if d.restricted else "Save"
+        # a signed document's suggested path is its signed original: overwriting it is what the warning is about
+        start = "" if d.signed else d.suggested_path or ""
         try:
-            if in_place:
+            while True:
+                p = d.path if in_place else self._ask_pdf_path(title, start, d)
+                if not p:
+                    return False
                 try:
-                    d.save()
+                    # no force after the file dialog's "Replace?": it does not know another program changed the file
+                    d.save(p)
+                    break
                 except FileChangedError:
                     choice = self._ask_file_changed()
                     if choice == "cancel":
                         return False
                     if choice == "overwrite":
-                        d.save(force=True)
-                    else:
-                        in_place = False
+                        d.save(p, force=True)
+                        break
+                    in_place = False
             if not in_place:
-                title = "Save a copy (this PDF restricts editing)" if d.restricted else "Save"
-                # a signed document's suggested path is its signed original: overwriting it is what the warning is about
-                start = "" if d.signed else getattr(d, "suggested_path", None) or ""
-                p = self._ask_pdf_path(title, start, d)
-                if not p:
-                    return False
-                d.save(p, force=True)   # the file dialog already asked whether to replace an existing file
                 tab = next(i for i in range(self.tabs.count()) if getattr(self.tabs.widget(i), "doc", None) is d)
                 self.tabs.setTabText(tab, os.path.basename(p))   # closing a background tab saves a doc that is not current
                 self.prefs.add_recent(p)
@@ -1281,7 +1282,7 @@ class Main(DocumentOps, W.QMainWindow):
         d = self.doc
         if d and d.path:
             name = os.path.basename(d.path)
-        elif d and getattr(d, "suggested_path", None):
+        elif d and d.suggested_path:
             name = os.path.basename(d.suggested_path) + " (recovered)"     # restored after a crash, not saved yet
         else:
             name = "Untitled"
