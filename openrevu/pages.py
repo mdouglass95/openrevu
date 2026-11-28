@@ -10,6 +10,10 @@ import pymupdf as fitz  # PyMuPDF
 
 from ._util import mutates
 
+# Every permission bit a PDF can withhold. A file that clears none of them restricts nothing.
+_ALL_PERMISSIONS = (fitz.PDF_PERM_PRINT | fitz.PDF_PERM_MODIFY | fitz.PDF_PERM_COPY | fitz.PDF_PERM_ANNOTATE
+                    | fitz.PDF_PERM_FORM | fitz.PDF_PERM_ACCESSIBILITY | fitz.PDF_PERM_ASSEMBLE | fitz.PDF_PERM_PRINT_HQ)
+
 
 class PageOps:
     # ---- helpers ----
@@ -377,6 +381,10 @@ class PageOps:
             if self._password:
                 rep.warnings.append("the PDF/A copy is not password protected, because PDF/A does not allow encryption. "
                                     "Keep the file in a safe place.")
+            elif self._permissions is not None and self._permissions & _ALL_PERMISSIONS != _ALL_PERMISSIONS:
+                rep.warnings.append("the PDF/A copy does not keep this file's restrictions on printing, editing and "
+                                    "copying, because PDF/A does not allow encryption. Anyone who has the copy can "
+                                    "print, edit and copy it.")
             out = fitz.open(path)
             links_before = sum(len(self.links(i)) for i in range(len(self.doc)))
             links_after = sum(len(pg.get_links()) for pg in out)
