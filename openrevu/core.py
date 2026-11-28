@@ -637,7 +637,7 @@ class Document(SheetOps, PageOps):
         self.modified = False
         self.default_scale, self.page_scales = self._load_scales()
         # A full rewrite (all save() can do) invalidates digital signatures, so callers warn before saving over the
-        # file. Set once at open: the signatures in the file on disk are what a save would break.
+        # file. True while the file at self.path still holds the signatures it had at open; any rewrite of it clears it.
         self.signed = data is not None and self._has_signatures(data)
 
     def _has_signatures(self, data: bytes) -> bool:
@@ -1489,12 +1489,14 @@ class Document(SheetOps, PageOps):
             self.save_as_required = False   # the new file is the user's own copy
         self._disk = _disk_state(path)
         self._own_copy = None
+        self.signed = False
         self.modified = False
 
     def _wrote_copy(self, path, copy: str, document: str):
         """A copy of this document was written to `path`. If that is the document's own file, the next in-place save
         stops (see save) and tells the user it would replace `copy` with `document`."""
         if self.path and same_file(path, self.path):
+            self.signed = False
             self._own_copy = (f"You replaced this file with {copy}. Saving overwrites it with {document}.",
                               _disk_state(path))
 

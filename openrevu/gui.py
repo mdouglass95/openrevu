@@ -211,7 +211,6 @@ class Main(DocumentOps, W.QMainWindow):
         self._autosave_rev: dict = {}           # document id -> the revision that was last written
         self._autosave_busy: set = set()        # ids of documents whose snapshot is being written in the background
         self._autosave_more = False             # a tick stopped early: go on when the running write ends
-        self._rewritten: set = set()            # ids of signed documents whose file on disk is already our rewrite
         self._autosave_done.connect(self._autosave_finished, QtCore.Qt.QueuedConnection)
         self._autosave_retry = QtCore.QTimer(self, singleShot=True)     # a tick put off by a pressed mouse button
         self._autosave_retry.timeout.connect(self.autosave_now)
@@ -1003,7 +1002,6 @@ class Main(DocumentOps, W.QMainWindow):
                 return
         recovery.remove(cv.doc.recovery_id)       # saved or discarded on purpose: no snapshot is needed
         self._autosave_rev.pop(cv.doc.recovery_id, None)
-        self._rewritten.discard(cv.doc.recovery_id)
         self.tabs.removeTab(i)
         cv.deleteLater()
         self._sync_central()
@@ -1059,7 +1057,7 @@ class Main(DocumentOps, W.QMainWindow):
 
     def _overwrites_signed_original(self, d: Document, path: str) -> bool:
         """True if writing `path` would rewrite `d`'s digitally signed file, whose signatures are still intact."""
-        if not (d.signed and d.path and path) or d.recovery_id in self._rewritten:
+        if not (d.signed and d.path and path):
             return False
         return same_file(path, d.path)
 
@@ -1078,7 +1076,7 @@ class Main(DocumentOps, W.QMainWindow):
 
     def _save(self, d: Document) -> bool:
         in_place = bool(d.path) and not d.save_as_required
-        if in_place and d.signed and d.recovery_id not in self._rewritten:
+        if in_place and d.signed:
             choice = self._ask_save_signed()
             if choice == "cancel":
                 return False
@@ -1116,7 +1114,6 @@ class Main(DocumentOps, W.QMainWindow):
     def _saved(self, d: Document):
         recovery.remove(d.recovery_id)
         self._autosave_rev.pop(d.recovery_id, None)
-        self._rewritten.add(d.recovery_id)   # the file at d.path is now a full rewrite: no intact signatures left to warn about
 
     def save(self):
         if self._need_doc():
