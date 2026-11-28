@@ -1,0 +1,14 @@
+{
+  "enabledPlugins": {
+    "caveman@caveman": false,
+    "pstack@pstack-claude": true
+  },
+  "extraKnownMarketplaces": {
+    "pstack-claude": {
+      "source": {
+        "source": "github",
+        "repo": "michael-denyer/pstack-claude"
+      }
+    }
+  }
+}

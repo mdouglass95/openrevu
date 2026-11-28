@@ -43,3 +43,6 @@ Thumbs.db
 # Scratch
 *.tmp
 *.log
+
+# Decision trails from pstack show-me-your-work
+.audit/
