@@ -34,6 +34,6 @@ Each feature file starts with an H1 title and one paragraph on what the user see
 - [Open and navigate](open-and-navigate.md): start page, Open PDF, passwords, pages, zoom, tabs, Recent files. Journey `open_navigate.py`.
 - [Markup](markup.md): draw, select, edit properties, replies, delete, undo, save. Journey `markup_roundtrip.py`.
 - [Measure](measure.md): calibrate, Length, Fill room area, Measurement summary, CSV export. Journey `measure_calibrate.py`.
-- [Sheets and revisions](sheets.md): Sheets panel, revisions, sheet list CSV. Journey `sheets_revision.py` (fails until #65 is fixed).
+- [Sheets and revisions](sheets.md): Sheets panel, revisions, sheet list CSV. Journey `sheets_revision.py`.
 - [Save and recovery](save-and-recovery.md): save, unsaved-changes prompt, autosave, crash recovery. Journey `crash_recovery.py`.
 - [Batch CLI](cli.md): `openrevu-cli` commands on saved files.

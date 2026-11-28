@@ -242,11 +242,11 @@ A **Count** marker must refuse to resize and say why.
 ### E. Sheets and revisions
 
 **T30 Sheets panel.** Open `plan_v1.pdf`. Open the **Sheets** tab (fifth icon on the left).
-Expect three rows: `A-101`, `A-102`, `S-201`, with titles. Edit a title and a discipline (double-click the cell). Try to give a sheet a number
+Expect three rows: `A-101`, `A-102`, `S-201`, with titles. Edit a title and a discipline (double-click the cell). Give a sheet a new number: its title stays. Try to give a sheet a number
 that another sheet already has: expect a clear message and the old value back.
 
 **T31 Revisions.** Select two rows (Ctrl+click). Click **Revision**. Enter `A`, a description, and a date such as `2026-01-15`.
-Expect `A` in the *Rev* column of both. Point at the Rev cell: a tooltip lists the history. Try the same revision name again:
+Expect `A` in the *Rev* column of both, and both titles unchanged. Point at the Rev cell: a tooltip lists the history. Try the same revision name again:
 expect a refusal. Try a bad date.
 
 **T32 Index.** Click **Index**. Expect a new first page "Sheet Index" with a table. Click a row on that page with the Pan tool:
